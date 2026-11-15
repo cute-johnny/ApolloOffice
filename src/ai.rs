@@ -116,6 +116,7 @@ pub async fn ask(a: &Ax, o: Ask) -> R<(String, Value)> {
             Ok(_) => feedback = "\nPrevious attempt returned no valid JSON. Return the requested JSON schema.".into(),
             Err(X::Back(e)) => return Err(X::Back(e)),
             Err(X::Drop(e)) => return Err(X::Drop(e)),
+            Err(X::NeedUser(q)) => return Err(X::NeedUser(q)),
             Err(e) => feedback = format!("\nPrevious attempt failed: {}", crate::sh::head(&e.to_string(), 1000)),
         }
     }
@@ -138,8 +139,12 @@ pub fn cost(a: &Ax, o: &Ask, u: [i64; 4], usd: Option<f64>) {
     }
     let sub = matches!(crate::prov::parse(&o.md).0, "cc" | "codex");
     let c = usd.or_else(|| crate::prov::px(a, &o.md).map(|x| (0..4).map(|i| u[i] as f64 * x[i]).sum::<f64>() / 1e6));
-    let rp = o.job.and_then(|j| a.db.jg(j)).map(|j| j.repo).unwrap_or_default();
+    let j = o.job.and_then(|j| a.db.jg(j));
+    let rp = j.as_ref().map(|x| x.repo.clone()).unwrap_or_default();
     a.db.run("insert into cost(t,day,job,repo,w,md,sub,tin,tcw,tcr,tout,usd) values(?,?,?,?,?,?,?,?,?,?,?,?)", crate::pa![crate::db::now(), crate::db::day(), o.job, rp.clone(), o.w.to_string(), o.md.clone(), sub as i64, u[0], u[1], u[2], u[3], c]);
+    if let (Some(uval), Some(pid)) = (c, j.as_ref().and_then(|x| x.project_id)) {
+        a.db.p_add_spend(pid, uval);
+    }
     if sub {
         return;
     }

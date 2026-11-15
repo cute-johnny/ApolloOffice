@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 pub const V: &str = env!("CARGO_PKG_VERSION");
-pub const WS: &[&str] = &["scout", "guard", "vet", "watcher", "hunter", "repro", "fixer", "ci", "reviewer", "submit"];
+pub const WS: &[&str] = &["scout", "guard", "vet", "watcher", "hunter", "repro", "fixer", "ci", "design_fixer", "tester", "reviewer", "submit"];
 
 #[derive(Clone, Serialize, Default)]
 pub struct Wk {
@@ -96,6 +96,7 @@ pub enum X {
     Lim(String),
     Net(String),
     Host(String, String),
+    NeedUser(Value),
     E(String),
 }
 
@@ -103,6 +104,7 @@ impl std::fmt::Display for X {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             X::Drop(s) | X::Back(s) | X::Lim(s) | X::Net(s) | X::E(s) | X::Host(_, s) => write!(f, "{s}"),
+            X::NeedUser(q) => write!(f, "{}", q["question"].as_str().unwrap_or("owner input needed")),
         }
     }
 }
@@ -147,6 +149,7 @@ pub fn dset() -> Value {
         "md": {
             "scout": "claude-haiku-5-5", "guard": "claude-haiku-5-5", "vet": "claude-haiku-5-5", "watcher": "claude-haiku-5-5",
             "repro": "claude-haiku-5-5", "repro2": "claude-sonnet-5-5", "fixer": "claude-sonnet-5-5", "hunter": "claude-sonnet-5-5",
+            "design_fixer": "claude-sonnet-5-5", "tester": "claude-sonnet-5-5", "architect": "claude-opus-5-5",
             "reviewer": "claude-haiku-5-5", "big": "claude-opus-5-5", "desk": "claude-sonnet-5-5"
         },
         "big": true,

@@ -93,10 +93,12 @@ fn state(a: &Ax) -> Value {
             wv[*x]["md"] = json!(a.md(x));
         }
     }
-    for x in a.db.all("select st, count(*) n, max(id) j from jobs where st in ('hunt','repro','fix','ci','review','gate','submit') group by st", pa![]) {
+    for x in a.db.all("select st, count(*) n, max(id) j from jobs where st in ('hunt','repro','fix','ci','design','test','review','gate','submit') group by st", pa![]) {
         let w = match x["st"].as_str().unwrap_or("") {
             "hunt" => "hunter",
             "fix" => "fixer",
+            "design" => "design_fixer",
+            "test" => "tester",
             "review" => "reviewer",
             "gate" => "submit",
             s => s,
@@ -114,8 +116,9 @@ fn state(a: &Ax) -> Value {
         "t": now(), "v": crate::app::V,
         "o": o, "w": wv, "fl": fl, "ln": ln, "cil": cil, "hst": hst,
         "hs": a.db.all("select id, ln, dk, on_ from hs order by id='local' desc, id", pa![]),
-        "q": a.db.all("select id,repo,num,kind,title,url,st,why,pr,t0,t1,json_extract(d,'$.h') h from jobs where st not in ('done','drop') order by st in ('hunt','repro','fix','ci','review','gate','submit') desc, st='approve' desc, st='vet', id limit 60", pa![]),
-        "dn": a.db.all("select id,repo,num,kind,title,url,st,why,pr,t1 from jobs where st in ('done','drop') order by t1 desc limit 25", pa![]),
+        "q": a.db.all("select id,repo,num,kind,title,url,st,why,pr,t0,t1,project_id,milestone_idx,question_json,json_extract(d,'$.h') h from jobs where st not in ('done','drop') order by st in ('hunt','repro','fix','ci','design','test','review','gate','submit') desc, st in ('need_user','approve') desc, st='vet', id limit 60", pa![]),
+        "dn": a.db.all("select id,repo,num,kind,title,url,st,why,pr,t1,project_id,milestone_idx from jobs where st in ('done','drop') order by t1 desc limit 25", pa![]),
+        "projects": a.db.all("select id,repo,title,epic_branch,st,pause_each,budget_usd,spent_usd,t0,t1 from projects order by id desc limit 20", pa![]),
         "pr": a.db.all("select repo,num,st,title,url,upd,merged from prs order by t0 desc limit 40", pa![]),
         "mg": a.db.all("select substr(merged,1,10) d, count(*) n from prs where merged is not null and merged >= date('now','-30 day') group by 1 order by 1", pa![]),
         "ev": a.db.all("select t,w,m,j from ev order by id desc limit 120", pa![]),
@@ -644,6 +647,200 @@ pub fn rid(s: &str) -> Option<String> {
     }
 }
 
+pub fn safe_artifact_path(dd: &std::path::Path, job_id: i64, file: &str) -> Option<std::path::PathBuf> {
+    let f = file.trim();
+    if job_id <= 0 || f.is_empty() || f.len() > 120 || f.starts_with('.') || f.contains("..") {
+        return None;
+    }
+    if !f.to_ascii_lowercase().ends_with(".png") {
+        return None;
+    }
+    if !f.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)) {
+        return None;
+    }
+    Some(dd.join("artifacts").join(job_id.to_string()).join(f))
+}
+
+fn milestone_summaries(db: &crate::db::Db, pid: i64) -> Vec<Value> {
+    db.p_milestones(pid)
+        .into_iter()
+        .map(|j| {
+            json!({
+                "id": j.id,
+                "kind": j.kind,
+                "title": j.title,
+                "st": j.st,
+                "why": j.why,
+                "pr": j.pr,
+                "url": j.url,
+                "milestone_idx": j.milestone_idx,
+                "depends_on": j.depends_on,
+                "parent_branch": j.parent_branch,
+                "question_json": j.question_json,
+                "t0": j.t0,
+                "t1": j.t1,
+            })
+        })
+        .collect()
+}
+
+fn setup_steps(ck: &Value) -> Vec<Value> {
+    let ok = |k: &str| ck[k]["ok"].as_bool().unwrap_or(false);
+    vec![
+        json!({"k": "git", "ok": ok("git"), "m": ck["git"]["m"], "action": if ok("git") { "Ready" } else { "Install Git: https://git-scm.com" }}),
+        json!({"k": "bash", "ok": ok("bash"), "m": ck["bash"]["m"], "action": if ok("bash") { "Ready" } else { "Install Git for Windows (provides Git Bash)" }}),
+        json!({"k": "gh", "ok": ok("gh"), "m": ck["gh"]["m"], "action": if ok("gh") { "Ready" } else { "Run in terminal: gh auth login" }}),
+        json!({"k": "claude", "ok": ok("claude"), "m": ck["claude"]["m"], "action": if ok("claude") { "Ready" } else { "Install Claude Code and run: claude (to sign in)" }}),
+        json!({"k": "docker", "ok": ok("docker"), "m": ck["docker"]["m"], "action": if ok("docker") { "Ready (sandboxed builds)" } else { "Start Docker Desktop (recommended) or confirm direct local builds" }}),
+    ]
+}
+
+async fn auto_setup(a: &Ax, b: &Value) -> Response<Body> {
+    let ck = checks(a).await;
+    let steps = setup_steps(&ck);
+    let dk = ck["docker"]["ok"].as_bool().unwrap_or(false);
+    let allow_raw = b["raw"].as_bool().unwrap_or(false);
+    if !dk && !allow_raw {
+        return js(json!({
+            "ok": false,
+            "needs_docker_or_raw": true,
+            "m": "Docker Desktop is not running. Start Docker Desktop (recommended) and click Auto-Setup again, or confirm running directly on this computer.",
+            "checks": ck,
+            "steps": steps,
+            "cfg": cfg(a),
+        }));
+    }
+    a.db.run(
+        "insert into hs(id,ssh,dk,ln,ci,gb,raw,on_,t0,no,cpu) values('local','',?,1,1,50,?,1,?,'',0) on conflict(id) do update set dk=excluded.dk, raw=excluded.raw, on_=1",
+        pa![dk as i64, (!dk) as i64, now()],
+    );
+    a.db.kd("up:local");
+    match crate::sh::ensure(a, "local").await {
+        Ok(_) => {
+            if dk {
+                a.db.ks("up:local", &json!(true));
+            }
+            a.lv.lock().unwrap().o.net.insert("local".into(), true);
+            a.sw.notify_one();
+            js(json!({"ok": true, "mode": if dk { "docker" } else { "raw" }, "checks": ck, "steps": steps, "cfg": cfg(a)}))
+        }
+        Err(m) => js(json!({"ok": false, "mode": if dk { "docker" } else { "raw" }, "m": m, "checks": ck, "steps": steps, "cfg": cfg(a)})),
+    }
+}
+
+pub async fn create_repo_inner(a: &Ax, full_or_name: &str, private: bool) -> Result<Value, (StatusCode, String)> {
+    let raw = full_or_name.trim().trim_start_matches("https://github.com/").trim_end_matches(".git").trim_matches('/');
+    if raw.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "enter a repository name like my-app or owner/my-app".into()));
+    }
+    let candidate = if raw.contains('/') {
+        raw.to_string()
+    } else {
+        let login = crate::gh::login(a).await;
+        if login.trim().is_empty() {
+            return Err((StatusCode::BAD_REQUEST, "GitHub CLI is not logged in (run gh auth login) or enter owner/name".into()));
+        }
+        format!("{}/{}", login.trim(), raw)
+    };
+    let Some(r) = rid(&candidate) else {
+        return Err((StatusCode::BAD_REQUEST, "use owner/name (letters, digits, ., _, - only)".into()));
+    };
+    if crate::gh::meta(a, &r).await.is_ok() {
+        return Err((StatusCode::CONFLICT, format!("repository {r} already exists on GitHub; add it instead")));
+    }
+    let vis = if private { "--private" } else { "--public" };
+    if let Err(e) = crate::sh::gh(&["repo", "create", &r, vis, "--add-readme"], 90).await {
+        return Err((StatusCode::BAD_GATEWAY, format!("failed to create GitHub repository {r}: {e}")));
+    }
+    for i in 0..3 {
+        if crate::gh::meta(a, &r).await.is_ok() {
+            break;
+        }
+        if i < 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        }
+    }
+    a.db.run(
+        "insert or ignore into rp(full,iss,feat,ci,setup,mode,t0) values(?,0,1,'','','ask',?)",
+        pa![r.clone(), now()],
+    );
+    a.say("scout", &format!("created GitHub repository {r}"), None);
+    a.sw.notify_one();
+    Ok(json!({
+        "ok": true,
+        "full": r,
+        "url": format!("https://github.com/{r}"),
+        "private": private,
+        "cfg": cfg(a),
+    }))
+}
+
+async fn create_repo(a: &Ax, b: &Value) -> Response<Body> {
+    let s = b["full"].as_str().or_else(|| b["name"].as_str()).unwrap_or("");
+    let priv_ = b["private"].as_bool().unwrap_or(true);
+    match create_repo_inner(a, s, priv_).await {
+        Ok(v) => js(v),
+        Err((c, m)) => er(c, &m),
+    }
+}
+
+fn project_act(a: &Ax, b: &Value) -> Result<Value, (StatusCode, String)> {
+    let id = b["id"].as_i64().unwrap_or(0);
+    let Some(_p) = a.db.pg(id) else {
+        return Err((StatusCode::NOT_FOUND, "no such project".into()));
+    };
+    let op = b["op"].as_str().unwrap_or("");
+    let mut updates: Vec<(&str, Value)> = vec![];
+    if let Some(pe) = b["pause_each"].as_bool() {
+        updates.push(("pause_each", json!(pe)));
+    }
+    if let Some(bu) = b["budget_usd"].as_f64() {
+        updates.push(("budget_usd", json!(bu.clamp(0.0, 100_000.0))));
+    }
+    match op {
+        "continue" => {
+            updates.push(("st", json!("running")));
+            a.db.pset(id, &updates);
+            a.say("fixer", &format!("project #{id} resumed by owner"), None);
+            a.sw.notify_one();
+        }
+        "pause" => {
+            updates.push(("st", json!("paused")));
+            a.db.pset(id, &updates);
+            a.say("fixer", &format!("project #{id} paused by owner"), None);
+        }
+        "drop" => {
+            updates.push(("st", json!("drop")));
+            a.db.pset(id, &updates);
+            for j in a.db.p_milestones(id) {
+                if ["ready", "vet", "approve", "need_user"].contains(&j.st.as_str()) {
+                    a.db.jset(j.id, &[("st", json!("drop")), ("why", json!("project dropped by owner"))]);
+                } else if !["done", "drop"].contains(&j.st.as_str()) {
+                    a.db.ks(&format!("kill:{}", j.id), &json!(true));
+                }
+            }
+            a.say("fixer", &format!("project #{id} dropped by owner"), None);
+        }
+        "set" => {
+            if b["resume"].as_bool() == Some(true) {
+                updates.push(("st", json!("running")));
+            }
+            a.db.pset(id, &updates);
+            if b["resume"].as_bool() == Some(true) {
+                a.sw.notify_one();
+            }
+        }
+        _ => return Err((StatusCode::BAD_REQUEST, "unknown project op".into())),
+    }
+    let mut st = state(a);
+    st["project"] = a.db.pg(id).map(|p| {
+        let mut v = p.to_json();
+        v["milestones"] = json!(milestone_summaries(&a.db, p.id));
+        v
+    }).unwrap_or(Value::Null);
+    Ok(st)
+}
+
 async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
     let qv = |k: &str| q.split('&').find_map(|x| x.strip_prefix(&format!("{k}="))).unwrap_or("").to_string();
     match (m.as_str(), p) {
@@ -656,10 +853,46 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
         ("GET", "/api/job") => {
             let id: i64 = qv("id").parse().unwrap_or(0);
             match a.db.one("select * from jobs where id=?", pa![id]) {
-                Some(j) => js(json!({"id": j["id"], "repo": j["repo"], "num": j["num"], "kind": j["kind"], "title": j["title"], "url": j["url"], "st": j["st"], "why": j["why"], "pt": j["d"]["pt"], "pb": j["d"]["pb"], "df": j["d"]["df"], "proof": j["d"]["proof"], "known": j["d"]["known"], "h": j["d"]["h"], "ext": j["d"]["ext"]["src"], "cost": a.db.one("select sum(case when sub=0 then usd end) usd, sum(case when sub=1 then usd end) val, sum(tin+tcw+tcr) ti, sum(tout) tou, count(*) n from cost where job=?", pa![id]), "ev": a.db.all("select t,w,m from ev where j=? order by id desc limit 80", pa![id])})),
+                Some(j) => js(json!({"id": j["id"], "repo": j["repo"], "num": j["num"], "kind": j["kind"], "title": j["title"], "url": j["url"], "st": j["st"], "why": j["why"], "project_id": j["project_id"], "milestone_idx": j["milestone_idx"], "depends_on": j["depends_on"], "parent_branch": j["parent_branch"], "question_json": j["question_json"], "artifacts": j["d"]["artifacts"], "pt": j["d"]["pt"], "pb": j["d"]["pb"], "df": j["d"]["df"], "proof": j["d"]["proof"], "known": j["d"]["known"], "h": j["d"]["h"], "ext": j["d"]["ext"]["src"], "cost": a.db.one("select sum(case when sub=0 then usd end) usd, sum(case when sub=1 then usd end) val, sum(tin+tcw+tcr) ti, sum(tout) tou, count(*) n from cost where job=?", pa![id]), "ev": a.db.all("select t,w,m from ev where j=? order by id desc limit 80", pa![id])})),
                 None => er(StatusCode::NOT_FOUND, "no such job"),
             }
         }
+        ("GET", "/api/projects") => {
+            let ps = a.db.p_all().into_iter().map(|p| {
+                let mut v = p.to_json();
+                v["milestones"] = json!(milestone_summaries(&a.db, p.id));
+                v
+            }).collect::<Vec<_>>();
+            js(json!({"projects": ps}))
+        }
+        ("GET", "/api/project") => {
+            let id: i64 = qv("id").parse().unwrap_or(0);
+            match a.db.pg(id) {
+                Some(p) => {
+                    let mut v = p.to_json();
+                    v["milestones"] = json!(milestone_summaries(&a.db, p.id));
+                    js(v)
+                }
+                None => er(StatusCode::NOT_FOUND, "no such project"),
+            }
+        }
+        ("GET", "/api/artifact") => {
+            let job_id: i64 = qv("job").parse().unwrap_or(0);
+            let file = qv("file");
+            let Some(path) = safe_artifact_path(&a.dd, job_id, &file) else {
+                return er(StatusCode::BAD_REQUEST, "invalid artifact path");
+            };
+            match std::fs::read(&path) {
+                Ok(bytes) => rs(StatusCode::OK, "image/png", bytes),
+                Err(_) => er(StatusCode::NOT_FOUND, "artifact not found"),
+            }
+        }
+        ("POST", "/api/setup/auto") => auto_setup(a, &b).await,
+        ("POST", "/api/project") => match project_act(a, &b) {
+            Ok(v) => js(v),
+            Err((c, m)) => er(c, &m),
+        },
+        ("POST", "/api/repo/create") => create_repo(a, &b).await,
         ("POST", "/api/act") => {
             let id = b["id"].as_i64().unwrap_or(0);
             match b["a"].as_str().unwrap_or("") {
@@ -733,6 +966,9 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
         },
         ("POST", "/api/repo") => {
             let op = b["op"].as_str().unwrap_or("");
+            if op == "create" {
+                return create_repo(a, &b).await;
+            }
             let Some(r) = rid(b["full"].as_str().unwrap_or("")) else { return er(StatusCode::BAD_REQUEST, "use owner/name") };
             match op {
                 "add" => {
@@ -1070,7 +1306,7 @@ pub async fn h(State(a): State<Ax>, req: Request<Body>) -> Response<Body> {
             return er(StatusCode::FORBIDDEN, "forbidden");
         }
         let b: Value = if m == Method::POST {
-            match to_bytes(b, 1 << 20).await {
+            match to_bytes(b, 2 << 20).await {
                 Ok(by) => serde_json::from_slice(&by).unwrap_or(json!({})),
                 Err(_) => return er(StatusCode::BAD_REQUEST, "body"),
             }
@@ -1161,5 +1397,31 @@ mod t {
         }
         let a = std::sync::Arc::new(crate::app::App::new(db, std::env::temp_dir(), 1, "x".into()));
         assert_eq!(state(&a)["ev"].as_array().unwrap().len(), 75);
+    }
+
+    #[test]
+    fn artifact_path_and_project_actions_enforce_safety_and_transitions() {
+        let root = std::path::PathBuf::from("C:/tmp/ao-test-data");
+        assert!(safe_artifact_path(&root, 0, "a.png").is_none());
+        assert!(safe_artifact_path(&root, 1, "../a.png").is_none());
+        assert!(safe_artifact_path(&root, 1, "a/b.png").is_none());
+        assert!(safe_artifact_path(&root, 1, ".hidden.png").is_none());
+        assert!(safe_artifact_path(&root, 1, "a.txt").is_none());
+        assert_eq!(safe_artifact_path(&root, 7, "m1_after.png"), Some(root.join("artifacts").join("7").join("m1_after.png")));
+
+        let db = crate::db::Db::mem();
+        let pid = db.pnew("u/app", "App", "spec", "epic/app", true, 12.0);
+        let j1 = db.jnew_proj("u/app", 0, "build", "M1", "", "ready", "", json!({}), None, 0.0, Some(pid), 1, &[], "epic/app");
+        let a = std::sync::Arc::new(crate::app::App::new(db, std::env::temp_dir(), 1, "x".into()));
+        let r1 = project_act(&a, &json!({"id": pid, "op": "pause"})).unwrap();
+        assert_eq!(r1["project"]["st"], "paused");
+        let r2 = project_act(&a, &json!({"id": pid, "op": "continue", "pause_each": false, "budget_usd": 30.0})).unwrap();
+        assert_eq!(r2["project"]["st"], "running");
+        assert_eq!(r2["project"]["pause_each"], false);
+        assert_eq!(r2["project"]["budget_usd"], 30.0);
+        assert_eq!(state(&a)["projects"].as_array().unwrap().len(), 1);
+        let r3 = project_act(&a, &json!({"id": pid, "op": "drop"})).unwrap();
+        assert_eq!(r3["project"]["st"], "drop");
+        assert_eq!(a.db.jg(j1).unwrap().st, "drop");
     }
 }
