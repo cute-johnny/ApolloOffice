@@ -5,7 +5,7 @@ use serde_json::json;
 use std::time::Duration;
 
 pub fn repo() -> String {
-    std::env::var("APOLLO_OFFICE_STAR_REPO").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "Silvertree2010/ApolloOffice".into())
+    std::env::var("APOLLO_OFFICE_STAR_REPO").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "cute-johnny/ApolloOfficeImproved".into())
 }
 
 pub async fn check(a: &Ax) {
