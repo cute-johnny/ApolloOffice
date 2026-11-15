@@ -44,7 +44,7 @@
     submit: "Holds the finished work for your approval, then pushes the branch and opens the pull request. Uses no AI model.",
     desk: "The boss at the front desk. Talk to him in the chat: he turns what you ask for into jobs and hands them to the right workers.",
   };
-  const DWARN = "Careful: he manages the whole office. One message can start work for Vet, Repro, Fixer and Hunter at once and spend their models' budget, so name the repository and say exactly what you want.";
+  const DWARN = "Careful: he manages the whole office. One plan from him can put work on Vet, Repro, Fixer and Hunter at once and spend their models' budget. Nothing starts until you press Start on his plan, so check it first.";
   window.AO.DWARN = DWARN;
   window.AO.DESC = DESC;
   const ORD = ["scout", "guard", "vet", "watcher", "hunter", "repro", "fixer", "ci", "reviewer", "submit"];
