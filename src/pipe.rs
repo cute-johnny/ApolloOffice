@@ -175,7 +175,7 @@ fn trs(j: &Job) -> Vec<String> {
     ms.into_iter().collect()
 }
 
-pub const FOOT: &str = "🤖 Generated with AI by [ApolloOffice](https://github.com/Silvertree2010/ApolloOffice), see the Co-Authored-By trailers for the models";
+pub const FOOT: &str = "🤖 Generated with AI by [ApolloOffice Improved](https://github.com/cute-johnny/ApolloOfficeImproved), see the Co-Authored-By trailers for the models";
 pub const FOOT0: &str = "🤖 Generated with AI, see the Co-Authored-By trailers for the models";
 
 fn fo(a: &Ax, j: &Job) -> &'static str {
