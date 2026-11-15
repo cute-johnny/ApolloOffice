@@ -110,7 +110,8 @@
       const it = (v, l, c, ti) => `<span title="${esc(ti)}"><b class="${c || ""}">${v ?? 0}</b> ${l}</span>`;
       return [it(x.m14, "merged", "ok2", "Merged in the last 14 days"), it(x.op, "open", "", "Open pull requests"), x.old ? it(x.old, "open > 7 d", "bad2", "Open longer than 7 days without merge") : "", yes(r.iss) ? it(`${x.ik || 0}/${x.is || 0}`, "issues → PR", x.is >= 30 && !x.ik ? "bad2" : "", "Issues taken in the last 14 days that became a pull request") : "", it(x.q, "queued", "", "Jobs waiting in Vet or ready"), it(usd(x.usd || 0), "14 d", "", "API cost in the last 14 days")].filter(Boolean).join("");
     };
-    B.innerHTML = `<div class="sec"><div class="box"><form id="fa" class="acts" style="margin:0"><input type="text" name="full" placeholder="Add a repository: owner/name or GitHub link" style="flex:1;min-width:200px"><button class="pri">Add</button></form><div class="msg" id="am"></div></div></div>
+    B.innerHTML = `<div class="sec"><div class="box"><form id="fa" class="acts" style="margin:0"><input type="text" name="full" placeholder="Add existing repository: owner/name or GitHub link" style="flex:1;min-width:200px"><button class="pri">Add</button></form><div class="msg" id="am"></div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--ln)"><form id="fc" class="acts" style="margin:0"><input type="text" name="name" placeholder="Or create new GitHub repo: my-new-app" style="flex:1;min-width:180px"><select name="vis"><option value="private">Private</option><option value="public">Public</option></select><button type="submit">Create repo</button></form><div class="msg" id="cm"></div></div></div></div>
     <div class="sec"><div class="rh"><h4>${rs.length} ${rs.length === 1 ? "repository" : "repositories"}</h4>${rs.length > 4 ? `<input type="text" id="rq" placeholder="Filter" autocomplete="off">` : ""}</div>${rs.map((r) => `<form class="box rr" data-r="${esc(r.full)}"><details ${op.has(r.full) ? "open" : ""}><summary><span class="rn">${esc(r.full)}</span><span class="rc">${st(r)}</span><span class="rs">${nums(r)}</span></summary>
       ${r.ci ? "" : `<div class="warn">No test command found. Enter the command that runs this repository's tests, otherwise nothing happens here.</div>`}
       <div class="fm">
@@ -153,6 +154,18 @@
       const n = $("am");
       n.className = "msg";
       n.textContent = r.ci ? `Added ${r.full}. Test command detected: ${r.ci}${r.setup ? " (setup: " + r.setup + ")" : ""}. Check it below.` : `Added ${r.full}. No test command detected, please enter one below.`;
+    };
+    $("fc").onsubmit = async (e) => {
+      e.preventDefault();
+      const b = e.target.querySelector("button"), m = $("cm");
+      const name = e.target.name.value.trim(), priv = e.target.vis.value === "private";
+      busy(b, true, "Creating…");
+      const r = await post({ op: "create", name, private: priv }, "/api/repo");
+      busy(b, false, "Create repo");
+      if (r.error) { m.className = "msg bad2"; m.textContent = r.error; return; }
+      await repos();
+      const n = $("cm");
+      if (n) { n.className = "msg ok2"; n.textContent = `Created ${r.full} (${priv ? "private" : "public"}) and added it to the office.`; }
     };
     for (const f of B.querySelectorAll("form[data-r]")) {
       f.onsubmit = (e) => e.preventDefault();
@@ -533,10 +546,24 @@
     show("Set up ApolloOffice", "setup");
     const row = (k, l) => `<div class="ck" style="margin:4px 0"><b class="${ck[k].ok ? "ok2" : "bad2"}">${ck[k].ok ? "ok" : "missing"}</b> ${l}: ${esc(ck[k].m)}</div>`;
     const hs = cfg.hosts.length, rs = cfg.repos.length;
-    B.innerHTML = `<div class="sec"><h4>1 · Tools</h4><div class="box">${row("git", "git")}${row("bash", "bash")}${row("gh", "GitHub CLI")}${row("claude", "Claude Code")}${row("docker", "Docker")}<div class="acts"><button id="br">Check again</button></div></div></div>
-      <div class="sec"><h4>2 · Where code is built</h4><div class="box"><div class="ck"><b class="${hs ? "ok2" : "bad2"}">${hs ? "ok" : "todo"}</b> ${hs ? hs + " machine(s)" : "Add this computer (Docker recommended)."}</div><div class="acts"><button id="bh">${hs ? "Machines" : "Add machine"}</button></div></div></div>
-      <div class="sec"><h4>3 · Repositories</h4><div class="box"><div class="ck"><b class="${rs ? "ok2" : "bad2"}">${rs ? "ok" : "todo"}</b> ${rs ? rs + " repository(s)" : "Add a GitHub repository to work on."}</div><div class="acts"><button id="bp">${rs ? "Repos" : "Add repository"}</button></div></div></div>
+    B.innerHTML = `<div class="sec"><div class="box"><div class="hd2"><b>Quick Auto-Setup</b></div><div class="msg">Sets up this computer with safe Docker isolation and automatic CPU limits.</div><div class="acts"><button class="pri" id="bauto">Auto-Setup This Computer</button><button id="br">Check again</button></div><div class="msg" id="sa"></div><div id="saraw" hidden style="margin-top:8px"><div class="warn">Docker is not running. You can start Docker Desktop (recommended) and click Auto-Setup again, or confirm running builds directly on this computer (less isolated).</div><div class="acts"><button type="button" id="bautoraw">Confirm Direct Local Mode</button></div></div></div></div>
+      <div class="sec"><h4>1 · Tools</h4><div class="box">${row("git", "git")}${row("bash", "bash")}${row("gh", "GitHub CLI")}${row("claude", "Claude Code")}${row("docker", "Docker")}</div></div>
+      <div class="sec"><h4>2 · Where code is built</h4><div class="box"><div class="ck"><b class="${hs ? "ok2" : "bad2"}">${hs ? "ok" : "todo"}</b> ${hs ? hs + " machine(s)" : "Not configured yet — click Auto-Setup above or Add machine."}</div><div class="acts"><button id="bh">${hs ? "Machines" : "Add machine"}</button></div></div></div>
+      <div class="sec"><h4>3 · Repositories</h4><div class="box"><div class="ck"><b class="${rs ? "ok2" : "bad2"}">${rs ? "ok" : "todo"}</b> ${rs ? rs + " repository(s)" : "Add a repository, or let the Front Desk chat create a new private repo when building a new app."}</div><div class="acts"><button id="bp">${rs ? "Repos" : "Add or create repo"}</button></div></div></div>
       <div class="msg">Workers use your own Claude Code login and your own GitHub account. Pull requests wait for your approval unless you change that per repository.</div>`;
+    const runAuto = async (raw) => {
+      const b = $("bauto"), m = $("sa");
+      busy(b, true, ck?.docker?.ok ? "Setting up Docker (first time may take a few minutes)…" : "Checking…");
+      m.className = "msg"; m.textContent = ""; $("saraw").hidden = true;
+      const r = await post({ raw: !!raw }, "/api/setup/auto");
+      busy(b, false, "Auto-Setup This Computer");
+      if (r.checks) ck = r.checks;
+      if (r.ok) { setup(); setTimeout(() => { if ($("sa")) { $("sa").className = "msg ok2"; $("sa").textContent = `Ready (${r.mode} mode).`; } }, 50); return; }
+      if (r.needs_docker_or_raw) { $("saraw").hidden = false; m.className = "msg bad2"; m.textContent = r.m || ""; return; }
+      m.className = "msg bad2"; m.textContent = r.error || r.m || "Setup failed.";
+    };
+    $("bauto").onclick = () => runAuto(false);
+    $("bautoraw").onclick = () => runAuto(true);
     $("br").onclick = async () => { ck = await get("/api/check"); setup(); };
     $("bh").onclick = hosts;
     $("bp").onclick = repos;
