@@ -18,7 +18,6 @@ create table if not exists projects(id integer primary key, repo text not null, 
 create index if not exists projects_st on projects(st);
 create table if not exists jobs(id integer primary key, repo text, num int, kind text default 'fix', title text, url text, st text, why text default '', d text default '{}', pr int, prio real default 0, t0 int, t1 int, project_id integer, milestone_idx integer default 0, depends_on text default '[]', parent_branch text default '', question_json text default '');
 create index if not exists jobs_st on jobs(st);
-create index if not exists jobs_proj on jobs(project_id);
 create table if not exists ev(id integer primary key, t int, w text, m text, j int);
 create table if not exists prs(repo text, num int, st text, title text, url text, upd text, merged text, d text default '{}', t0 int, primary key(repo, num));
 create table if not exists tok(day text, w text, tin int default 0, tout int default 0, primary key(day, w));
@@ -422,6 +421,7 @@ mod project_db_tests {
         ";
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch(legacy_sql).unwrap();
+        c.execute_batch(SCH).unwrap();
         mig(&c);
         mig(&c);
         let db = Db(Arc::new(Mutex::new(c)));
