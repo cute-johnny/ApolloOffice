@@ -455,8 +455,24 @@ pub async fn orph(a: &Ax, id: &str) {
     }
 }
 
+/// One setup at a time per machine: saving a machine and the background loop
+/// both call `ensure`, and two runs at once race on `docker build` / `docker run --name`.
+static ENSL: std::sync::Mutex<Vec<(String, std::sync::Arc<tokio::sync::Mutex<()>>)>> = std::sync::Mutex::new(Vec::new());
+
+fn ensure_lock(id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    let mut v = ENSL.lock().unwrap();
+    if let Some((_, m)) = v.iter().find(|(k, _)| k == id) {
+        return m.clone();
+    }
+    let m = std::sync::Arc::new(tokio::sync::Mutex::new(()));
+    v.push((id.to_string(), m.clone()));
+    m
+}
+
 pub async fn ensure(a: &Ax, id: &str) -> Result<bool, String> {
     let Some(h) = ho(a, id) else { return Err("unknown machine".into()) };
+    let lk = ensure_lock(id);
+    let _g = lk.lock().await;
     if !h.dk {
         let r = hraw(&h, &format!("mkdir -p \"{}\" && git --version >/dev/null && echo ok", hb(a, &h)), 60).await;
         return if r.c == 0 { Ok(true) } else { Err(format!("{}{}", r.o, r.e).trim().chars().take(300).collect()) };
