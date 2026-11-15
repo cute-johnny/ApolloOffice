@@ -244,8 +244,8 @@
     }
   };
 
-  const RK = { scout: [["scout", "Model"]], guard: [["guard", "Model"]], vet: [["vet", "Model"]], watcher: [["watcher", "Model"]], hunter: [["hunter", "Model"]], reviewer: [["reviewer", "Model"]], repro: [["repro", "First try"], ["repro2", "Second try"]], fixer: [["fixer", "Model"], ["big", "Complex bugs"]], desk: [["desk", "Model"]] };
-  const TOOLS = ["hunter", "repro", "fixer"];
+  const RK = { scout: [["scout", "Model"]], guard: [["guard", "Model"]], vet: [["vet", "Model"]], watcher: [["watcher", "Model"]], hunter: [["hunter", "Model"]], reviewer: [["reviewer", "Model"]], repro: [["repro", "First try"], ["repro2", "Second try"]], fixer: [["fixer", "Model"], ["big", "Complex bugs"]], design_fixer: [["design_fixer", "Model"]], tester: [["tester", "Model"]], desk: [["desk", "Model"]] };
+  const TOOLS = ["hunter", "repro", "fixer", "design_fixer", "tester"];
   const split = (v) => { const i = (v || "").indexOf(":"), p = i > 0 ? v.slice(0, i) : ""; return cfg.prov.some((x) => x.id === p) ? [p, v.slice(i + 1)] : ["cc", v || ""]; };
   const join = (p, m) => (p === "cc" ? m : p + ":" + m);
 
@@ -322,7 +322,7 @@
         <div class="hint">Keys are stored encrypted on this computer. Claude Code and Codex use their own CLI logins. Pick a model per worker under Models below.</div>
       </div></div></div>
       <div data-tab="md" class="sec"><h4>Models</h4><div class="box"><div class="fm" style="margin:0">
-        ${["desk", "scout", "guard", "vet", "hunter", "repro", "fixer", "reviewer", "watcher"].map((w) => `<label>${esc(A.NM?.[w] || w)}</label><div class="ck"><span style="flex:1">${RK[w].map(([k, l]) => esc((RK[w].length > 1 ? l + ": " : "") + (A.mdn ? A.mdn(s.md[k]) : s.md[k]))).join(" · ")}</span><button type="button" data-role="${w}">Change</button></div>`).join("")}
+        ${["desk", "scout", "guard", "vet", "hunter", "repro", "fixer", "design_fixer", "tester", "reviewer", "watcher"].map((w) => `<label>${esc(A.NM?.[w] || w)}</label><div class="ck"><span style="flex:1">${RK[w].map(([k, l]) => esc((RK[w].length > 1 ? l + ": " : "") + (A.mdn ? A.mdn(s.md[k]) : s.md[k]))).join(" · ")}</span><button type="button" data-role="${w}">Change</button></div>`).join("")}
         <div class="hint">Also reachable with the gear on each worker's card.</div>
       </div></div></div>
       <div data-tab="gen" class="sec"><h4>Sign in</h4><div class="box">${cfg.google ? `<div class="ck"><b class="ok2">Google</b> ${esc(cfg.google)} can sign in.</div><div class="acts"><button type="button" class="dng" id="gu">Disconnect Google</button></div>` : `<div class="ck">Sign in with a one-time link from <code>apollo-office login-link</code>, or connect a Google account.</div><div class="acts"><button type="button" id="gl">Connect Google account</button></div>`}</div></div>
@@ -514,10 +514,20 @@
     const tag = (j.repo.split("/")[1] || j.repo) + (j.num ? "#" + j.num : "");
     const cs = j.cost && j.cost.n ? `<div class="msg">Cost: ${j.cost.usd != null ? usd(j.cost.usd) + " API" : ""}${j.cost.usd != null && j.cost.val != null ? " · " : ""}${j.cost.val != null ? usd(j.cost.val) + " login value" : ""}${j.cost.usd == null && j.cost.val == null ? "unknown" : ""} · ${Math.round((j.cost.ti || 0) / 1000)}k in, ${Math.round((j.cost.tou || 0) / 1000)}k out</div>` : "";
     const ev = (j.ev || []).map((e) => `<div><span class="tm">${new Date(e.t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span><span>${esc(e.w)}</span><span>${esc(e.m)}</span></div>`).join("");
+    const artHtml = j.artifacts?.length ? `<div class="sec"><h4>Screenshots &amp; artifacts</h4><div class="artgrid">${j.artifacts.map((f) => `<figure class="artcard"><a href="/api/artifact?job=${id}&file=${encodeURIComponent(f)}" target="_blank" rel="noopener"><img src="/api/artifact?job=${id}&file=${encodeURIComponent(f)}" loading="lazy" alt="${esc(f)}"></a><figcaption title="${esc(f)}">${esc(f)}</figcaption></figure>`).join("")}</div></div>` : "";
+    const repParts = [];
+    if (j.design && (j.design.summary || j.design.issues?.length)) {
+      repParts.push(`<div class="box"><div class="hd2"><b>Design Fixer</b><span class="pill ${j.design.ok === false ? "bad" : "ok"}">${j.design.skipped ? "skipped" : j.design.ok === false ? "issues" : "ok"}</span></div><div class="msg">${esc(j.design.summary || "")}</div>${j.design.issues?.length ? `<div class="hint" style="margin-top:4px">${j.design.issues.map((x) => esc(typeof x === "string" ? x : x.msg || JSON.stringify(x))).join(" · ")}</div>` : ""}</div>`);
+    }
+    if (j.test_report && (j.test_report.summary || j.test_report.flows_tested?.length || j.test_report.bugs_found?.length)) {
+      repParts.push(`<div class="box"><div class="hd2"><b>Tester E2E</b><span class="pill ${j.test_report.ok === false ? "bad" : "ok"}">${j.test_report.ok === false ? "failed" : "passed"}</span></div><div class="msg">${esc(j.test_report.summary || "")}</div>${j.test_report.flows_tested?.length ? `<div class="hint" style="margin-top:4px">Flows: ${j.test_report.flows_tested.map((x) => esc(String(x))).join(", ")}</div>` : ""}${j.test_report.bugs_found?.length ? `<div class="msg bad2" style="margin-top:4px">${j.test_report.bugs_found.map((x) => esc(typeof x === "string" ? x : x.msg || JSON.stringify(x))).join("\n")}</div>` : ""}</div>`);
+    }
+    const repHtml = repParts.length ? `<div class="sec"><h4>Visual &amp; E2E Verification</h4>${repParts.join("")}</div>` : "";
     if (j.st === "approve") {
       B.innerHTML = `<div class="sec"><div class="box"><div class="hd2"><b>${esc(j.repo)}${j.num ? " #" + j.num : j.ext ? " (reported by " + esc(j.ext) + ")" : " (found by Hunter)"}</b>${j.url ? `<a class="a" href="#" data-u="${esc(j.url)}">${j.num ? "open issue" : "open repository"}</a>` : ""}</div><div class="msg">Built and tested on ${esc(j.h || "")}. Nothing is on GitHub yet.</div>${cs}</div></div>
       <div class="sec"><h4>Pull request</h4><input type="text" id="pt" value="${esc(j.pt || j.title)}"><textarea id="pb" style="min-height:220px;margin-top:8px">${esc(j.pb || "")}</textarea></div>
       ${j.proof ? `<div class="sec"><h4>Proof</h4><pre class="df">${esc((j.proof.a || "") + "\n\n" + (j.proof.b || ""))}</pre></div>` : ""}
+      ${repHtml}${artHtml}
       <div class="sec"><h4>Diff</h4>${dview(j.df)}</div>
       <div class="acts"><button class="pri" id="ba">Submit pull request</button><button class="dng" id="bd">Drop</button></div><div class="msg" id="jm"></div>
       <div class="sec" style="margin-top:20px"><h4>Log</h4><div class="log">${ev}</div></div>`;
@@ -547,6 +557,7 @@
     B.innerHTML = `${needBox}<div class="sec"><div class="box"><div class="hd2"><b>${esc(j.title)}</b><span class="pill">${esc(j.st)}</span></div><div class="msg">${esc(j.repo)} ${esc(tag)} · ${esc(j.kind)}${j.h ? " · " + esc(j.h) : ""}\n${esc(j.why || "")}</div>${cs}
       <div class="acts">${j.url ? `<button data-u="${esc(j.url)}">Open on GitHub</button>` : ""}${!["done", "drop"].includes(j.st) ? `<button class="dng" data-d="${id}">Drop</button>` : ""}${j.st === "drop" && ["fix", "build", "design_fix", "test_app"].includes(j.kind) ? `<button data-rq="${id}">Try again</button>` : ""}</div></div></div>
       ${ansHtml}
+      ${repHtml}${artHtml}
       ${j.df ? `<div class="sec"><h4>Diff</h4>${dview(j.df)}</div>` : ""}
       <div class="sec"><h4>Log</h4><div class="log">${ev || `<div class="empty">nothing yet</div>`}</div></div>`;
     if (j.st === "need_user") {

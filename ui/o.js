@@ -24,12 +24,14 @@
     repro: { body: "#e0675a", dark: "#b2463b", light: "#f0998f" },
     fixer: { body: "#d97757", dark: "#b0573a", light: "#eb9b80" },
     ci: { body: "#8d9199", dark: "#62666d", light: "#b9bcc2" },
+    design_fixer: { body: "#e88cb5", dark: "#b55683", light: "#f5b8d4" },
+    tester: { body: "#74c788", dark: "#469359", light: "#a8e3b7" },
     reviewer: { body: "#d0649f", dark: "#a3437a", light: "#e597c2" },
     submit: { body: "#5cbf6a", dark: "#3d9149", light: "#94dd9e" },
     watcher: { body: "#4fb3e0", dark: "#2f86b0", light: "#8fd2f0" },
     desk: { body: "#34363d", dark: "#15161a", light: "#7a7f8a" },
   };
-  const NM = { hunter: "Hunter", scout: "Scout", guard: "Guard", vet: "Vet", repro: "Repro", fixer: "Fixer", ci: "CI", reviewer: "Reviewer", submit: "Submit", watcher: "Watcher", desk: "Front desk" };
+  const NM = { hunter: "Hunter", scout: "Scout", guard: "Guard", vet: "Vet", repro: "Repro", fixer: "Fixer", ci: "CI", design_fixer: "Design Fixer", tester: "Tester", reviewer: "Reviewer", submit: "Submit", watcher: "Watcher", desk: "Front desk" };
   window.AO.NM = NM;
   const DESC = {
     scout: "Scans the open GitHub issues of your repositories and picks the ones that look like fixable bugs or wanted features.",
@@ -40,6 +42,8 @@
     repro: "Reproduces the bug on a build machine before anything is changed, or writes the plan for a feature.",
     fixer: "Writes the regression test and the fix as two commits on a new branch.",
     ci: "Runs the project's tests and proves the new test fails without the fix and passes with it. Uses no AI model.",
+    design_fixer: "Captures real Chromium screenshots at desktop and mobile viewports, audits layout and accessibility via inspect_page, and fixes visual bugs.",
+    tester: "Boots the finished application locally, exercises interactive flows end-to-end with Chromium and HTTP/CLI checks, and catches runtime bugs.",
     reviewer: "Reviews the finished diff like a strict maintainer and sends it back to Fixer if something is wrong.",
     submit: "Holds the finished work for your approval, then pushes the branch and opens the pull request. Uses no AI model.",
     desk: "The boss at the front desk. Talk to him in the chat: he turns what you ask for into jobs and hands them to the right workers.",
@@ -47,12 +51,12 @@
   const DWARN = "Careful: he manages the whole office. One plan from him can put work on Vet, Repro, Fixer and Hunter at once and spend their models' budget. Nothing starts until you press Start on his plan, so check it first.";
   window.AO.DWARN = DWARN;
   window.AO.DESC = DESC;
-  const ORD = ["scout", "guard", "vet", "watcher", "hunter", "repro", "fixer", "ci", "reviewer", "submit"];
+  const ORD = ["scout", "guard", "vet", "watcher", "hunter", "repro", "fixer", "ci", "design_fixer", "tester", "reviewer", "submit"];
 
-  // The floor is 400 wide; the 84 pixels on the right are the front desk wing.
-  const VW = 484, VH = 258;
-  const AN = { scout: [34, 74], guard: [74, 74], vet: [150, 74], watcher: [226, 74], repro: [53, 164], fixer: [147, 164], ci: [327, 100], reviewer: [241, 164], submit: [343, 164], desk: [442, 172] };
-  const TEAM = [["hunter", "hunt", 0], ["repro", "repro", 8], ["fixer", "fix", 102], ["reviewer", "review", 196], ["submit", "submit", 290]];
+  // The floor is 464 wide; the 84 pixels on the right are the front desk wing.
+  const VW = 548, VH = 258;
+  const AN = { scout: [34, 74], guard: [74, 74], vet: [150, 74], watcher: [226, 74], repro: [64, 164], fixer: [106, 164], design_fixer: [148, 164], tester: [190, 164], ci: [391, 100], reviewer: [232, 164], submit: [274, 164], desk: [506, 172] };
+  const TEAM = [["hunter", "hunt", 0], ["repro", "repro", 8], ["fixer", "fix", 102], ["design_fixer", "design", 166], ["tester", "test", 230], ["reviewer", "review", 294], ["submit", "submit", 358]];
   const FITC = ["#e8e6df", "#1b1a18", "#4fb3e0", "#e0675a", "#5cbf6a", "#9c7ae0", "#d0649f", "#8d9199"];
 
   const cv = $("cv");
@@ -100,19 +104,19 @@
     px(0, 0, VW, VH, "#e9eef3");
     for (let k = 0, y = 35; y < VH; y += 8, k++) for (let x = k % 2 ? 0 : 8; x < VW; x += 16) px(x, y, 8, 8, "#e2e8ee");
     c.globalAlpha = 0.55;
-    for (const [x0, w] of [[36, 110], [326, 66]]) for (let y = 35; y < 92; y++) px(x0 + (y - 35) * 0.7, y, w, 1, "#f7fafc");
+    for (const [x0, w] of [[36, 110], [390, 66]]) for (let y = 35; y < 92; y++) px(x0 + (y - 35) * 0.7, y, w, 1, "#f7fafc");
     c.globalAlpha = 1;
     px(0, 0, VW, 34, "#f8f9fb");
     px(0, 30, VW, 4, "#e6ebf0");
     px(0, 34, VW, 1, "#c9d1db");
     win(36, 5, 110, 22, t, 1);
-    win(326, 5, 66, 22, t, 2);
-    px(256, 38, 140, 84, "#f3f5f8");
-    px(256, 38, 140, 1, "#c9d1db");
-    px(256, 38, 1, 84, "#c9d1db");
-    tx("MACHINES", 262, 42, "#8a94a2");
-    px(158, 6, 84, 22, "#0a0b0d");
-    px(158, 6, 84, 1, "#24272d");
+    win(390, 5, 66, 22, t, 2);
+    px(320, 38, 140, 84, "#f3f5f8");
+    px(320, 38, 140, 1, "#c9d1db");
+    px(320, 38, 1, 84, "#c9d1db");
+    tx("MACHINES", 326, 42, "#8a94a2");
+    px(190, 6, 84, 22, "#0a0b0d");
+    px(190, 6, 84, 1, "#24272d");
   };
   const floor = (t) => {
     if (lt()) return day(t);
@@ -120,27 +124,27 @@
     px(0, 0, VW, 34, "#121317");
     px(0, 34, VW, 1, "#1d1f24");
     for (let k = 0, y = 35; y < VH; y += 8, k++) for (let x = k % 2 ? 0 : 8; x < VW; x += 16) px(x, y, 8, 8, "#111215");
-    px(256, 38, 140, 84, "#0f1013");
-    px(256, 38, 140, 1, "#1d1f24");
-    px(256, 38, 1, 84, "#1d1f24");
-    tx("MACHINES", 262, 42, "#3d4045");
-    px(158, 6, 84, 22, "#0a0b0d");
-    px(158, 6, 84, 1, "#24272d");
+    px(320, 38, 140, 84, "#0f1013");
+    px(320, 38, 140, 1, "#1d1f24");
+    px(320, 38, 1, 84, "#1d1f24");
+    tx("MACHINES", 326, 42, "#3d4045");
+    px(190, 6, 84, 22, "#0a0b0d");
+    px(190, 6, 84, 1, "#24272d");
   };
 
   const board = (t) => {
     const s = S;
-    tx("APOLLO OFFICE", 162, 9, "#8a8d94");
+    tx("APOLLO OFFICE", 194, 9, "#8a8d94");
     if (!s) return;
-    const q = (s.n.ready || 0) + (s.n.repro || 0) + (s.n.fix || 0) + (s.n.ci || 0) + (s.n.review || 0) + (s.n.gate || 0) + (s.n.submit || 0);
+    const q = (s.n.ready || 0) + (s.n.repro || 0) + (s.n.fix || 0) + (s.n.ci || 0) + (s.n.design || 0) + (s.n.test || 0) + (s.n.review || 0) + (s.n.gate || 0) + (s.n.submit || 0);
     const op = s.pr.filter((p) => p.st === "open").length;
-    if (s.o.off) { if (Math.floor(t * 2) % 2) tx("OFFLINE", 164, 18, "#e0675a"); }
-    else if (party()) { if (Math.floor(t * 3) % 2) tx("MERGED!", 164, 18, "#5cbf6a"); }
-    else tx(`Q ${q} PR ${op}`, 164, 18, "#5c5f66");
+    if (s.o.off) { if (Math.floor(t * 2) % 2) tx("OFFLINE", 196, 18, "#e0675a"); }
+    else if (party()) { if (Math.floor(t * 3) % 2) tx("MERGED!", 196, 18, "#5cbf6a"); }
+    else tx(`Q ${q} PR ${op}`, 196, 18, "#5c5f66");
     const live = !s.o.off && !s.o.pause && !s.o.man;
     const ap = (s.n.approve || 0);
-    if (ap) { px(300, 136, 70, 16, "#131a14"); px(300, 136, 70, 1, "#3d9149"); tx(`APPROVE ${ap}`, 304, 141, Math.floor(t * 1.5) % 2 ? "#94dd9e" : "#5cbf6a"); }
-    px(234, 10, 3, 3, live ? (Math.floor(t * 1.5) % 2 ? "#5cbf6a" : "#3d9149") : s.o.off ? "#e0675a" : "#8d9199");
+    if (ap) { px(364, 136, 70, 16, "#131a14"); px(364, 136, 70, 1, "#3d9149"); tx(`APPROVE ${ap}`, 368, 141, Math.floor(t * 1.5) % 2 ? "#94dd9e" : "#5cbf6a"); }
+    px(266, 10, 3, 3, live ? (Math.floor(t * 1.5) % 2 ? "#5cbf6a" : "#3d9149") : s.o.off ? "#e0675a" : "#8d9199");
     const d = new Date();
     tx(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`, 6, 9, "#4a4d54");
   };
@@ -210,6 +214,8 @@
     guard: (r, sk) => { K.draw(fc, ["sss", "sws", "sss", ".s."], r.left + 2, r.top + 4, { body: sk.body }); },
     vet: (r) => { const y = r.eyeY - 1; for (const x of [r.cx - 5, r.cx + 2]) { K.px(fc, x, y, "#e8e6df", 4, 1); K.px(fc, x, y + 3, "#e8e6df", 4, 1); K.px(fc, x, y, "#e8e6df", 1, 4); K.px(fc, x + 3, y, "#e8e6df", 1, 4); } K.px(fc, r.cx - 1, y + 1, "#e8e6df", 3, 1); },
     repro: (r, sk, t, p) => { const x = r.handR.x, y = r.handR.y - 5 + (p.mood === "work" ? Math.round(Math.sin(t * 4)) : 0); K.draw(fc, [".ww.", "w..w", "w..w", ".ww.", "...g", "....g"], x, y, {}); },
+    design_fixer: (r, sk) => { K.px(fc, r.handR.x, r.handR.y - 4, "#86704f", 1, 4); K.px(fc, r.handR.x, r.handR.y - 5, "#d9b44a", 1, 1); K.px(fc, r.handR.x - 1, r.handR.y - 7, sk.light, 3, 2); },
+    tester: (r) => { K.px(fc, r.handR.x - 1, r.handR.y - 5, "#e8e6df", 4, 5); K.px(fc, r.handR.x, r.handR.y - 4, "#469359", 2, 1); K.px(fc, r.handR.x, r.handR.y - 2, "#469359", 2, 1); },
     reviewer: (r) => { K.px(fc, r.handR.x, r.handR.y - 4, "#e0675a", 1, 4); K.px(fc, r.handR.x, r.handR.y, "#e8e6df", 1, 1); },
     desk: (r) => { K.px(fc, r.cx - 2, r.top + 5, "#f4f1e8", 5, 1); K.px(fc, r.cx, r.top + 6, "#d9b44a", 1, 4); K.px(fc, r.cx - 1, r.top + 8, "#d9b44a", 3, 2); },
     watcher: (r) => { K.px(fc, r.left - 1, r.top - 2, "#55524b", r.bw + 2, 1); K.px(fc, r.left - 2, r.top - 1, "#55524b", 1, 4); K.px(fc, r.right + 1, r.top - 1, "#55524b", 1, 4); K.px(fc, r.left - 3, r.top + 1, "#e8e6df", 2, 3); K.px(fc, r.right + 1, r.top + 1, "#e8e6df", 2, 3); },
@@ -296,7 +302,7 @@
   const RK = () => (S?.hs || []).filter((h) => h.on_).slice(0, 7).map((h) => [h.id, RL(h.id)]);
   const rack = (x, y, t, h, lb) => {
     hits.push({ k: "h:" + h, b: [x - 9, y - 41, x + 9, y + 21], h });
-    const jbs = (S?.q || []).filter((q) => q.h === h && ["repro", "fix", "ci", "review", "gate", "submit"].includes(q.st));
+    const jbs = (S?.q || []).filter((q) => q.h === h && ["repro", "fix", "ci", "design", "test", "review", "gate", "submit"].includes(q.st));
     const ci = jbs.some((q) => q.st === "ci"), busy = jbs.length > 0;
     const down = S?.o?.net?.[h] === false;
     px(x - 7, y - 34, 14, 46, "#1c1e22");
@@ -328,7 +334,7 @@
     const vn = S?.o?.vn ?? (S?.w?.vet?.st === "work" ? 1 : 0);
     for (let k = 0; k < 3; k++) seat("vet", 114 + k * 36, 74, t, { st: k < vn ? "work" : "idle", seed: 11 + k, fit: k ? k + 2 : 0, fc: k + 4, vk: k }, k === 1 ? "VET" : "", k < vn);
     seat("watcher", 226, 74, t, { seed: 7 }, "WATCHER", S?.w?.watcher?.st === "work");
-    px(270, 128, 120, 1, "#1d1f24");
+    px(334, 128, 120, 1, "#1d1f24");
 
   };
 
@@ -342,7 +348,7 @@
         else js.slice(0, m).forEach((q, k) => it.push({ n, q, f: k === 0, c: js.length }));
       }
       let x = 22, row = 0, pv = null;
-      const lim = (r) => (r ? 360 : ap ? 278 : 370);
+      const lim = (r) => (r ? 424 : ap ? 342 : 434);
       for (const i of it) {
         if (pv && i.n !== pv) x += 10;
         const tw = (it.filter((y) => y.n === i.n).length - 1) * 32;
@@ -395,7 +401,7 @@
   // boss, drawn twice the size of the other workers, at a big black desk.
   const wing = (t) => {
     const l = lt(), [x, y] = AN.desk;
-    px(400, 35, 1, VH - 35, l ? "#d5dce4" : "#16171a");
+    px(464, 35, 1, VH - 35, l ? "#d5dce4" : "#16171a");
     px(x - 17, 8, 34, 26, l ? "#9aa3ad" : "#24272d");
     px(x - 15, 10, 30, 24, l ? "#5a5f69" : "#17181c");
     px(x - 14, 11, 13, 22, l ? "#666c77" : "#1b1c21");
@@ -428,13 +434,13 @@
     hits = [];
     floor(t);
     board(t);
-    radio(292, 9, t);
-    plant(248, 112);
-    plant(392, 210);
+    radio(356, 9, t);
+    plant(312, 112);
+    plant(456, 210);
     wing(t);
     paths(t);
     intake(t);
-    RK().forEach(([h, lb], i) => rack(272 + i * 19, 100, t, h, lb));
+    RK().forEach(([h, lb], i) => rack(336 + i * 19, 100, t, h, lb));
     teams(t);
     confetti(t);
     const hh = hov && hits.find((h) => h.k === hov);
@@ -493,7 +499,7 @@
       };
       el.onmouseleave = () => { hovT = null; tip(); };
     }
-    const STG = { hunter: ["hunt"], repro: ["repro"], fixer: ["fix"], ci: ["ci"], reviewer: ["review"], submit: ["gate", "submit"] };
+    const STG = { hunter: ["hunt"], repro: ["repro"], fixer: ["fix"], ci: ["ci"], design_fixer: ["design"], tester: ["test"], reviewer: ["review"], submit: ["gate", "submit"] };
     for (const t of el.children) {
       const n = t.dataset.w, w = S.w[n] || { st: "idle", say: "", md: "", tk: 0 };
       const cn = STG[n] ? S.q.filter((q) => STG[n].includes(q.st)).length : n === "vet" ? S.o.vn || 0 : 0;
@@ -662,7 +668,7 @@
   };
   const htip = (h) => {
     const x = (S.hs || []).find((y) => y.id === h.h) || {}, m = S.hst?.[h.h], down = S.o.net?.[h.h] === false;
-    const js = S.q.filter((q) => q.h === h.h && ["repro", "fix", "ci", "review", "gate", "submit"].includes(q.st));
+    const js = S.q.filter((q) => q.h === h.h && ["repro", "fix", "ci", "design", "test", "review", "gate", "submit"].includes(q.st));
     let r = `<div class="th"><b>${esc(h.h === "local" ? "this computer" : h.h)}</b><span>${x.dk ? "Docker" : "no Docker"}</span></div>`
       + tr("status", down ? `<span class="bad2">offline</span>` : `<span class="ok2">online</span> · ${js.length}/${x.ln || 0} lanes busy`);
     if (m) {
