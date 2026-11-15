@@ -30,6 +30,19 @@
   };
   const NM = { hunter: "Hunter", scout: "Scout", guard: "Guard", vet: "Vet", repro: "Repro", fixer: "Fixer", ci: "CI", reviewer: "Reviewer", submit: "Submit", watcher: "Watcher" };
   window.AO.NM = NM;
+  const DESC = {
+    scout: "Scans the open GitHub issues of your repositories and picks the ones that look like fixable bugs or wanted features.",
+    guard: "Screens text written by strangers (issues, comments, reviews) for prompt injection before any other worker reads it.",
+    vet: "Decides strictly whether one issue is worth a pull request: a clear, testable, unclaimed bug or an accepted feature. Everything else is dropped.",
+    watcher: "Watches the pull requests the office opened: answers review requests, queues requested changes, rebases on conflicts.",
+    hunter: "Tests a repository on its own to find and prove a real bug nobody has reported yet.",
+    repro: "Reproduces the bug on a build machine before anything is changed, or writes the plan for a feature.",
+    fixer: "Writes the regression test and the fix as two commits on a new branch.",
+    ci: "Runs the project's tests and proves the new test fails without the fix and passes with it. Uses no AI model.",
+    reviewer: "Reviews the finished diff like a strict maintainer and sends it back to Fixer if something is wrong.",
+    submit: "Holds the finished work for your approval, then pushes the branch and opens the pull request. Uses no AI model.",
+  };
+  window.AO.DESC = DESC;
   const ORD = ["scout", "guard", "vet", "watcher", "hunter", "repro", "fixer", "ci", "reviewer", "submit"];
 
   const VW = 400, VH = 258;
@@ -263,7 +276,7 @@
     return st;
   };
 
-  let hits = [], hov = null, mx = 0, my = 0;
+  let hits = [], hov = null, hovT = null, mx = 0, my = 0;
   const seat = (n, x, y, t, o, lb, hot) => {
     hits.push({ k: "w:" + n + ":" + (o.q?.id ?? o.vk ?? ""), b: [x - 16, y - 30, x + 18, y + 20], n, q: o.q });
     const st = crab(n, x + 4, y + 2, t, o);
@@ -440,6 +453,13 @@
         if (g) { e.stopPropagation(); window.AO.role && window.AO.role(g.closest(".tile").dataset.w); return; }
         const t = e.target.closest(".tile"); if (t) post({ a: "hold", w: t.dataset.w, on: !S.w[t.dataset.w].hold }).then(apply);
       };
+      el.onmousemove = (e) => {
+        const t = e.target.closest(".tile");
+        hovT = t && !e.target.closest(".gear") ? t.dataset.w : null;
+        mx = e.clientX; my = e.clientY;
+        tip();
+      };
+      el.onmouseleave = () => { hovT = null; tip(); };
     }
     const STG = { hunter: ["hunt"], repro: ["repro"], fixer: ["fix"], ci: ["ci"], reviewer: ["review"], submit: ["gate", "submit"] };
     for (const t of el.children) {
@@ -453,7 +473,6 @@
       t.className = "tile " + (wk ? "work" : "") + (w.hold ? " hold" : "");
       t.querySelector(".stt").textContent = w.hold ? "paused" : wk ? "work" + (cn > 1 ? " ×" + cn : "") : w.st === "sleep" ? "sleep" : "idle";
       t.querySelector(".ft").textContent = w.tk ? kt(w.tk) + " tok" : "";
-      t.title = w.hold ? "click to resume" : "click to pause";
     }
   };
 
@@ -597,13 +616,14 @@
     const w = S.w[h.n] || {}, q = h.q || (w.job && S.q.find((x) => x.id === w.job));
     const st = w.hold ? "held" : S.o.man || S.o.pause ? "paused" : h.q ? "work" : w.st || "idle";
     const cs = (w.cmds || []).length ? w.cmds.slice(-4).reverse() : S.ev.filter((e) => e.w === h.n).slice(0, 3).map((e) => [e.t, e.m]);
-    return `<div class="th"><b>${NM[h.n]}</b><span>${esc(mdn(w.md))}</span></div>`
+    return `<div class="th"><b>${NM[h.n]}</b><span>${esc(h.n === "ci" || h.n === "submit" ? "no model" : mdn(w.md))}</span></div>`
+      + `<div class="td">${esc(DESC[h.n])}</div>`
       + tr("status", esc(st) + (w.tk ? ` · ${kt(w.tk)} tok today` : ""))
       + (w.cs && (w.cs[0] || w.cs[1]) ? tr("cost", [w.cs[0] ? AO.usd(w.cs[0]) + " API" : "", w.cs[1] ? AO.usd(w.cs[1]) + " login value" : ""].filter(Boolean).join(" · ") + " today") : "")
       + (q ? tr("job", `${esc(rn(q))} · ${esc(q.title)} <span class="k">${esc(q.st)}</span>`) : "")
       + (w.say && !h.q ? tr("says", esc(w.say) + ` <span class="k">${ago(w.t)}</span>`) : "")
       + (cs.length ? `<div class="tc">${cs.map(([t, c]) => `<div><span class="k">${ago(t)}</span><span>${esc(c)}</span></div>`).join("")}</div>` : "")
-      + (q ? `<div class="tf">click to open the job</div>` : "");
+      + (h.tile ? `<div class="tf">click to ${w.hold ? "resume" : "pause"} this worker</div>` : q ? `<div class="tf">click to open the job</div>` : "");
   };
   const htip = (h) => {
     const x = (S.hs || []).find((y) => y.id === h.h) || {}, m = S.hst?.[h.h], down = S.o.net?.[h.h] === false;
@@ -621,7 +641,7 @@
     return r + `<div class="tf">click to edit machines</div>`;
   };
   const tip = () => {
-    const el = $("tip"), h = hov && hits.find((x) => x.k === hov);
+    const el = $("tip"), h = hovT ? { n: hovT, tile: true } : hov && hits.find((x) => x.k === hov);
     if (!h || !S) { el.hidden = true; return; }
     el.innerHTML = h.h ? htip(h) : wtip(h);
     el.hidden = false;
