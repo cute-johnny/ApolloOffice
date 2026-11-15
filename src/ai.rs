@@ -173,6 +173,12 @@ pub async fn ask1(a: &Ax, mut o: Ask) -> R<(String, Value)> {
     if let Some(r) = o.rn.as_mut() {
         r.w = o.w.to_string();
         r.md = o.md.clone();
+        if r.job.is_none() {
+            r.job = o.job;
+        }
+        if r.ask_q.is_none() {
+            r.ask_q = Some(std::sync::Arc::new(std::sync::Mutex::new(None)));
+        }
     }
     match crate::prov::parse(&o.md).0 {
         "cc" => cc(a, o).await,
@@ -291,6 +297,9 @@ async fn cc(a: &Ax, o: Ask) -> R<(String, Value)> {
     }
     let (u, c) = *us.lock().unwrap();
     cost(a, &o, u, c);
+    if let Some(q) = o.rn.as_ref().and_then(|r| r.ask_q.as_ref()).and_then(|m| m.lock().unwrap().clone()) {
+        return Err(X::NeedUser(q));
+    }
     let txt = txt.into_inner().unwrap();
     let er = format!("{} {}", err.into_inner().unwrap(), crate::sh::last(&r.e, 500));
     let dn = done.into_inner().unwrap();
@@ -389,6 +398,9 @@ async fn codex(a: &Ax, o: Ask) -> R<(String, Value)> {
     let _ = std::fs::remove_dir_all(&rd);
     let u = *us.lock().unwrap();
     cost(a, &o, u, None);
+    if let Some(q) = o.rn.as_ref().and_then(|r| r.ask_q.as_ref()).and_then(|m| m.lock().unwrap().clone()) {
+        return Err(X::NeedUser(q));
+    }
     let er = format!("{} {}", err.into_inner().unwrap(), crate::sh::last(&r.e, 500));
     if regex::Regex::new(LIM).unwrap().is_match(&er) && txt.trim().is_empty() {
         return Err(X::Lim(crate::sh::head(er.trim(), 200)));
@@ -545,6 +557,9 @@ async fn api(a: &Ax, o: Ask) -> R<(String, Value)> {
                     };
                     rs.push(json!({"type": "tool_result", "tool_use_id": x["id"], "content": crate::sh::clip(&t, result_limit), "is_error": e}));
                 }
+                if let Some(q) = o.rn.as_ref().and_then(|r| r.ask_q.as_ref()).and_then(|m| m.lock().unwrap().clone()) {
+                    return Err(X::NeedUser(q));
+                }
                 ms.push(json!({"role": "user", "content": rs}));
             }
         } else {
@@ -613,6 +628,9 @@ async fn api(a: &Ax, o: Ask) -> R<(String, Value)> {
                     let n = c["function"]["name"].as_str().unwrap_or("").to_string();
                     let t = tool(n.clone(), g).await.unwrap_or_else(|e| format!("error: {e}"));
                     ms.push(if ol { json!({"role": "tool", "tool_name": n, "content": crate::sh::clip(&t, result_limit)}) } else { json!({"role": "tool", "tool_call_id": c["id"], "content": crate::sh::clip(&t, result_limit)}) });
+                }
+                if let Some(q) = o.rn.as_ref().and_then(|r| r.ask_q.as_ref()).and_then(|m| m.lock().unwrap().clone()) {
+                    return Err(X::NeedUser(q));
                 }
             }
         }
@@ -712,7 +730,7 @@ mod t {
             let (a, seen, dd) = fake(fmt).await;
             let mut o = Ask::new("fixer", md.into(), "sys".into(), "go".into());
             o.turns = 5;
-            o.rn = Some(Rn { h: "local".into(), dir: dd.join("repo").display().to_string(), w: String::new(), md: String::new() });
+            o.rn = Some(Rn { h: "local".into(), dir: dd.join("repo").display().to_string(), w: String::new(), md: String::new(), ..Default::default() });
             let (_, js) = ask1(&a, o).await.unwrap();
             assert_eq!(js["ok"], true, "{fmt}");
             let c = a.db.one("select sum(tin) i, sum(tout) o, sum(usd) u, max(sub) s from cost where w='fixer'", crate::pa![]).unwrap();
@@ -782,14 +800,14 @@ print('9 frozen independent addition cases PASS')
         let a=std::sync::Arc::new(crate::app::App::new(db,dd.clone(),1,"apollo-office".into()));
         let task="The shell function add in add.sh returns 3 for add 8 5, expected 13; -13 for add -8 5, expected -3; -5 for add 0 5, expected 5. Existing bash t/run.sh passes because only 0 plus 0 is checked. Correct sums are required for positive, negative, mixed-sign and zero integers.";
         let mut repro=Ask::new("repro",model.clone(),p("repro"),task.into());
-        repro.turns=24;repro.t=240;repro.rn=Some(Rn{h:"local".into(),dir:repo.display().to_string(),w:"repro".into(),md:String::new()});
+        repro.turns=24;repro.t=240;repro.rn=Some(Rn{h:"local".into(),dir:repo.display().to_string(),w:"repro".into(),md:String::new(),..Default::default()});
         let reproduced=ask1(&a,repro).await;
         println!("REPRO_RESULT {reproduced:?}\nREPRO_EVENTS {}",json!(a.db.all("select w,m from ev where w='repro'",crate::pa![])));
         assert_eq!(reproduced.expect("Beam must complete actual reproduction").1["ok"],true);
         assert!(!verify().status.success(),"reproduction must not fix the source");
         git(&["restore","."]);git(&["clean","-fdq"]);
         let mut fixer=Ask::new("fixer",model.clone(),p("fixer"),format!("{task}\nBase commit: {base}. Repository rules: add focused named TAP regression cases under t/*_test.sh so bash t/run.sh runs them; preserve t/run.sh and t/zero_test.sh. The branch is ready. No dependencies are required. Exactly the test commit then the fix commit, as required by your role."));
-        fixer.turns=24;fixer.t=240;fixer.rn=Some(Rn{h:"local".into(),dir:repo.display().to_string(),w:"fixer".into(),md:String::new()});
+        fixer.turns=24;fixer.t=240;fixer.rn=Some(Rn{h:"local".into(),dir:repo.display().to_string(),w:"fixer".into(),md:String::new(),..Default::default()});
         let result=ask1(&a,fixer).await;
         println!("FIXER_RESULT {result:?}\nHOST_EVENTS {}",json!(a.db.all("select w,m from ev where w in ('repro','fixer')",crate::pa![])));
         let (_,out)=result.expect("Beam must complete the actual fixer tool loop");assert!(!out["test_cmd"].as_str().unwrap_or("").is_empty());
@@ -823,7 +841,7 @@ print('9 frozen independent addition cases PASS')
         let a=std::sync::Arc::new(crate::app::App::new(db,dd,1,"apollo-office".into()));
         let baseline=crate::sh::hx(&a,"remote",&format!("cd \"{dir}\" && source ./add.sh && add 8 5"),30).await;assert_eq!(baseline.c,0);assert_eq!(baseline.o.trim(),"3");
         let mut ask=Ask::new("repro",model.clone(),p("repro"),"The actual add function in add.sh returns 3 for add 8 5 instead of 13. Reproduce the wrong behavior with a targeted shell command and report actual observations. No production repair or commits in this reproduction task; leave the source clean.".into());
-        ask.turns=24;ask.t=240;ask.rn=Some(Rn{h:"remote".into(),dir:dir.clone(),w:"repro".into(),md:String::new()});
+        ask.turns=24;ask.t=240;ask.rn=Some(Rn{h:"remote".into(),dir:dir.clone(),w:"repro".into(),md:String::new(),..Default::default()});
         let result=ask1(&a,ask).await;
         println!("REMOTE_RESULT {result:?}\nREMOTE_HOST_EVENTS {}",json!(a.db.all("select w,m from ev",crate::pa![])));
         assert_eq!(result.expect("actual remote Beam reproduction").1["ok"],true);
@@ -856,7 +874,7 @@ print('7 frozen independent cases PASS')
         let a=std::sync::Arc::new(crate::app::App::new(db,dd.clone(),1,"apollo-office".into()));
         let mut o=Ask::new("fixer",model.clone(),"Repair the actual repository through the advertised Apollo host functions. Use read, write/edit, and sh. Python3 is installed as python3. Return final JSON {\"ok\":true} only after real command verification. Do not use OpenCode native tools.".into(),
             "Fix heading(value) in heading.py: strip outside whitespace, lowercase Unicode text, collapse each run of any whitespace into one hyphen, preserve existing hyphens, empty/whitespace-only input becomes empty string. Read the file first, edit it, and execute Python checks through sh before finishing. Do not edit/create acceptance tests. The host will run frozen independent tests.".into());
-        o.turns=10;o.t=240;o.rn=Some(Rn{h:"local".into(),dir:repo.display().to_string(),w:"fixer".into(),md:String::new()});
+        o.turns=10;o.t=240;o.rn=Some(Rn{h:"local".into(),dir:repo.display().to_string(),w:"fixer".into(),md:String::new(),..Default::default()});
         let result=ask1(&a,o).await;
         let after=verify();
         let events = a.db.all("select m from ev where w='fixer'", crate::pa![]);

@@ -841,6 +841,65 @@ fn project_act(a: &Ax, b: &Value) -> Result<Value, (StatusCode, String)> {
     Ok(st)
 }
 
+pub(crate) fn answer_job_inner(a: &Ax, b: &Value) -> Result<Value, (StatusCode, String)> {
+    let id = b["id"].as_i64().unwrap_or(0);
+    let Some(mut j) = a.db.jg(id) else {
+        return Err((StatusCode::NOT_FOUND, "no such job".into()));
+    };
+    if j.st != "need_user" {
+        return Err((StatusCode::CONFLICT, "job is not waiting for user input".into()));
+    }
+    let qv: Value = match j.question_json.as_ref() {
+        Some(Value::String(s)) => serde_json::from_str(s).unwrap_or_else(|_| json!({})),
+        Some(v) if v.is_object() => v.clone(),
+        _ => json!({}),
+    };
+    let is_secret = b["secret"]
+        .as_bool()
+        .unwrap_or_else(|| qv["secret"].as_bool().unwrap_or(false));
+    let ans = b["answer"].as_str().unwrap_or("").to_string();
+    if ans.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "answer cannot be empty".into()));
+    }
+    let env_name = b["env_name"]
+        .as_str()
+        .unwrap_or_else(|| qv["env_name"].as_str().unwrap_or(""))
+        .trim()
+        .to_string();
+    let worker = qv["worker"].as_str().unwrap_or("repro");
+    let worker = if crate::app::WS.contains(&worker) { worker } else { "repro" };
+    if is_secret {
+        if !crate::mcp::valid_env_name(&env_name) {
+            return Err((StatusCode::BAD_REQUEST, "secret answers require a valid UPPER_SNAKE_CASE env_name (not a system env var)".into()));
+        }
+        if let Err(err) = crate::vault::put(a, &format!("jobenv:{id}:{env_name}"), ans.trim()) {
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("failed to encrypt secret: {err}")));
+        }
+        let mut envs = j.d["secret_envs"].as_array().cloned().unwrap_or_default();
+        if !envs.iter().any(|x| x.as_str() == Some(&env_name)) {
+            envs.push(json!(env_name));
+        }
+        j.d["secret_envs"] = json!(envs);
+        let mut hist = j.d["answers"].as_array().cloned().unwrap_or_default();
+        hist.push(json!({"q": qv["question"].as_str().unwrap_or(""), "secret": true, "env_name": env_name, "t": now()}));
+        j.d["answers"] = json!(hist);
+        a.say(worker, &format!("user provided encrypted secret ${env_name}"), Some(id));
+    } else {
+        let mut hist = j.d["answers"].as_array().cloned().unwrap_or_default();
+        hist.push(json!({"q": qv["question"].as_str().unwrap_or(""), "a": crate::sh::head(ans.trim(), 4000), "secret": false, "t": now()}));
+        j.d["answers"] = json!(hist);
+        a.say(worker, &format!("user answered: {}", crate::sh::head(ans.trim(), 160)), Some(id));
+    }
+    a.db.jset(id, &[("st", json!("ready")), ("why", json!("answered by user, resuming")), ("d", j.d.clone()), ("question_json", Value::Null)]);
+    if let Some(pid) = j.project_id {
+        if a.db.pg(pid).map(|p| p.st == "need_user").unwrap_or(false) {
+            a.db.pset(pid, &[("st", json!("running"))]);
+        }
+    }
+    a.sw.notify_one();
+    Ok(state(a))
+}
+
 async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
     let qv = |k: &str| q.split('&').find_map(|x| x.strip_prefix(&format!("{k}="))).unwrap_or("").to_string();
     match (m.as_str(), p) {
@@ -853,7 +912,7 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
         ("GET", "/api/job") => {
             let id: i64 = qv("id").parse().unwrap_or(0);
             match a.db.one("select * from jobs where id=?", pa![id]) {
-                Some(j) => js(json!({"id": j["id"], "repo": j["repo"], "num": j["num"], "kind": j["kind"], "title": j["title"], "url": j["url"], "st": j["st"], "why": j["why"], "project_id": j["project_id"], "milestone_idx": j["milestone_idx"], "depends_on": j["depends_on"], "parent_branch": j["parent_branch"], "question_json": j["question_json"], "artifacts": j["d"]["artifacts"], "pt": j["d"]["pt"], "pb": j["d"]["pb"], "df": j["d"]["df"], "proof": j["d"]["proof"], "known": j["d"]["known"], "h": j["d"]["h"], "ext": j["d"]["ext"]["src"], "cost": a.db.one("select sum(case when sub=0 then usd end) usd, sum(case when sub=1 then usd end) val, sum(tin+tcw+tcr) ti, sum(tout) tou, count(*) n from cost where job=?", pa![id]), "ev": a.db.all("select t,w,m from ev where j=? order by id desc limit 80", pa![id])})),
+                Some(j) => js(json!({"id": j["id"], "repo": j["repo"], "num": j["num"], "kind": j["kind"], "title": j["title"], "url": j["url"], "st": j["st"], "why": j["why"], "project_id": j["project_id"], "milestone_idx": j["milestone_idx"], "depends_on": j["depends_on"], "parent_branch": j["parent_branch"], "question_json": j["question_json"], "answers": j["d"]["answers"], "secret_envs": j["d"]["secret_envs"], "artifacts": j["d"]["artifacts"], "pt": j["d"]["pt"], "pb": j["d"]["pb"], "df": j["d"]["df"], "proof": j["d"]["proof"], "known": j["d"]["known"], "h": j["d"]["h"], "ext": j["d"]["ext"]["src"], "cost": a.db.one("select sum(case when sub=0 then usd end) usd, sum(case when sub=1 then usd end) val, sum(tin+tcw+tcr) ti, sum(tout) tou, count(*) n from cost where job=?", pa![id]), "ev": a.db.all("select t,w,m from ev where j=? order by id desc limit 80", pa![id])})),
                 None => er(StatusCode::NOT_FOUND, "no such job"),
             }
         }
@@ -917,7 +976,7 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
                 }
                 "drop" => {
                     if let Some(j) = a.db.jg(id) {
-                        if ["ready", "vet", "approve"].contains(&j.st.as_str()) {
+                        if ["ready", "vet", "approve", "need_user"].contains(&j.st.as_str()) {
                             a.db.jset(id, &[("st", json!("drop")), ("why", json!("dropped by the owner"))]);
                         } else if !["done", "drop"].contains(&j.st.as_str()) {
                             a.db.ks(&format!("kill:{id}"), &json!(true));
@@ -941,17 +1000,21 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
                 }
                 "requeue" => {
                     if let Some(j) = a.db.jg(id) {
-                        if j.st == "drop" && j.kind == "fix" {
+                        if j.st == "drop" && ["fix", "build", "design_fix", "test_app"].contains(&j.kind.as_str()) {
                             let mut d = j.d.clone();
-                            for k in ["h", "rs", "rp", "br", "f", "f0", "sq", "known", "vt"] {
+                            for k in ["h", "rs", "rp", "br", "f", "f0", "sq", "known", "vt", "paused_stage"] {
                                 d.as_object_mut().map(|o| o.remove(k));
                             }
                             a.db.kd(&format!("kill:{id}"));
                             a.db.run("delete from kv where k=? or k like ?", pa![format!("cired:{}", j.repo), format!("cired:{}@%", j.repo)]);
-                            a.db.jset(id, &[("st", json!(if j.why.starts_with("Guard") || j.why.starts_with("Vet") { "vet" } else { "ready" })), ("why", json!("requeued by the owner")), ("d", d)]);
+                            a.db.jset(id, &[("st", json!(if j.why.starts_with("Guard") || j.why.starts_with("Vet") { "vet" } else { "ready" })), ("why", json!("requeued by the owner")), ("d", d), ("question_json", Value::Null)]);
                         }
                     }
                 }
+                "answer" => match answer_job_inner(a, &b) {
+                    Ok(v) => return js(v),
+                    Err((c, msg)) => return er(c, &msg),
+                },
                 _ => return er(StatusCode::BAD_REQUEST, "unknown action"),
             }
             js(state(a))
@@ -1423,5 +1486,31 @@ mod t {
         let r3 = project_act(&a, &json!({"id": pid, "op": "drop"})).unwrap();
         assert_eq!(r3["project"]["st"], "drop");
         assert_eq!(a.db.jg(j1).unwrap().st, "drop");
+    }
+
+    #[test]
+    fn answer_job_encrypts_secrets_in_vault_without_exposing_in_job_json() {
+        std::env::set_var("APOLLO_OFFICE_VAULT", "file");
+        let root = std::env::temp_dir().join(format!("apollo-web-ans-{}", hex::encode(rand::random::<[u8; 6]>())));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = crate::db::Db::mem();
+        let pid = db.pnew("u/app", "App", "spec", "epic/app", true, 12.0);
+        db.pset(pid, &[("st", json!("need_user"))]);
+        let jid = db.jnew_proj("u/app", 0, "build", "M1", "", "need_user", "Need API key", json!({"br": "fix/1", "rp": true}), None, 0.0, Some(pid), 1, &[], "epic/app");
+        let qj = json!({"question": "Provide Stripe key", "why": "Billing check", "secret": true, "env_name": "STRIPE_KEY", "worker": "fixer"});
+        db.jset(jid, &[("question_json", json!(qj.to_string()))]);
+        let a = std::sync::Arc::new(crate::app::App::new(db, root.clone(), 1, "x".into()));
+
+        assert!(answer_job_inner(&a, &json!({"id": jid, "answer": "bad", "secret": true, "env_name": "PATH"})).is_err());
+        let st = answer_job_inner(&a, &json!({"id": jid, "answer": "sk_live_secret_value_123", "secret": true, "env_name": "STRIPE_KEY"})).unwrap();
+        let job = a.db.jg(jid).unwrap();
+        assert_eq!(job.st, "ready");
+        assert!(job.question_json.is_none());
+        assert!(!job.d.to_string().contains("sk_live_secret_value_123"));
+        assert_eq!(job.d["secret_envs"], json!(["STRIPE_KEY"]));
+        assert_eq!(crate::vault::get(&a, "jobenv:1:STRIPE_KEY").unwrap(), "sk_live_secret_value_123");
+        assert_eq!(a.db.pg(pid).unwrap().st, "running");
+        assert!(!st.to_string().contains("sk_live_secret_value_123"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

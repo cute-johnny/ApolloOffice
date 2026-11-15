@@ -51,12 +51,14 @@ pub struct Lv {
     pub hst: HashMap<String, Value>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Rn {
     pub h: String,
     pub dir: String,
     pub w: String,
     pub md: String,
+    pub job: Option<i64>,
+    pub ask_q: Option<std::sync::Arc<std::sync::Mutex<Option<serde_json::Value>>>>,
 }
 
 pub struct App {

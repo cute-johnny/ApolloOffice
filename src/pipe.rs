@@ -278,7 +278,38 @@ async fn prep(a: &Ax, j: &mut Job) -> R<()> {
 }
 
 fn rn(a: &Ax, j: &Job) -> Option<Rn> {
-    Some(Rn { h: j.h(), dir: dir(a, j), w: String::new(), md: String::new() })
+    Some(Rn { h: j.h(), dir: dir(a, j), w: String::new(), md: String::new(), job: Some(j.id), ..Default::default() })
+}
+
+fn answers_context(j: &Job) -> String {
+    let mut lines = vec![];
+    if let Some(arr) = j.d["answers"].as_array() {
+        for item in arr {
+            let q = item["q"].as_str().unwrap_or("").trim();
+            if item["secret"].as_bool().unwrap_or(false) {
+                let env = item["env_name"].as_str().unwrap_or("").trim();
+                if !env.is_empty() {
+                    lines.push(format!("- Question: {q}\n  Answer: encrypted secret stored as shell env var `${env}` (automatically injected into `sh` and CI commands; value redacted in logs)."));
+                }
+            } else {
+                let ans = item["a"].as_str().unwrap_or("").trim();
+                if !ans.is_empty() {
+                    lines.push(format!("- Question: {q}\n  Answer: {ans}"));
+                }
+            }
+        }
+    }
+    if let Some(envs) = j.d["secret_envs"].as_array() {
+        let names: Vec<&str> = envs.iter().filter_map(|v| v.as_str()).filter(|s| !s.is_empty()).collect();
+        if !names.is_empty() {
+            lines.push(format!("Available encrypted job secrets in shell env: {}", names.iter().map(|s| format!("${s}")).collect::<Vec<_>>().join(", ")));
+        }
+    }
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}\n", wrap("user-answers", &lines.join("\n")))
+    }
 }
 
 fn rules(a: &Ax, j: &Job) -> String {
@@ -297,7 +328,7 @@ fn cx(a: &Ax, j: &Job) -> bool {
 async fn repro(a: &Ax, j: &mut Job) -> R<()> {
     a.db.jset(j.id, &[("st", json!("repro"))]);
     let p = format!("Repository: {}. {}.\nVet note: {}\n\n{}", j.repo, j.orig(), j.d["hint"].as_str().unwrap_or("-"), wrap("issue", &format!("{}\n\n{}", if j.s("title").is_empty() { &j.title } else { j.d["title"].as_str().unwrap() }, j.s("body"))));
-    let p = format!("{p}{}{}", rules(a,j),crate::quality::context(j));
+    let p = format!("{}{}{}{}", p, rules(a, j), answers_context(j), crate::quality::context(j));
     let ms = if crate::routing::enabled(a) { crate::routing::plan(a) } else if cx(a, j) { vec![a.md("big")] } else { vec![a.md("repro"), a.md("repro2")] };
     let mut reproduction_feedback=String::new();
     for (attempt, md) in ms.into_iter().enumerate() {
@@ -312,11 +343,15 @@ async fn repro(a: &Ax, j: &mut Job) -> R<()> {
         o.ef = Some("medium");
         o.t = 90 * 60;
         let result = ask(a, o).await;
+        if let Err(X::NeedUser(q)) = result {
+            return Err(X::NeedUser(q));
+        }
         x(a, j, "git checkout -q -- . && git clean -fdq", 120).await;
         let (_, js) = match result {
             Ok(v) => v,
             Err(X::Back(e)) => return Err(X::Back(e)),
             Err(X::Drop(e)) => return Err(X::Drop(e)),
+            Err(X::NeedUser(q)) => return Err(X::NeedUser(q)),
             Err(e) if crate::routing::enabled(a) => {
                 a.say("repro", &format!("attempt failed: {e}"), Some(j.id));
                 reproduction_feedback=crate::sh::head(&e.to_string(),3000);
@@ -478,18 +513,22 @@ async fn cirun(a: &Ax, j: &Job, at: Option<&str>) -> (i32, String) {
     let c = rp(a, &j.repo)["ci"].as_str().unwrap_or("").to_string();
     let id = j.id;
     let ax = a.clone();
+    let secs = crate::mcp::job_secrets(a, Some(id));
+    let sec_pre = crate::mcp::shell_env_prefix(&secs);
+    let secs_ln = secs.clone();
     let ln = move |l: &str| {
         if !l.trim().is_empty() {
-            ax.lv.lock().unwrap().cil.insert(id, crate::sh::head(l.trim(), 160));
+            let clean_l = crate::mcp::scrub_secrets(l.trim(), &secs_ln);
+            ax.lv.lock().unwrap().cil.insert(id, crate::sh::head(&clean_l, 160));
         }
     };
     let co = match at {
         Some(s) => format!("git checkout -q {} && ", q(s)),
         None => String::new(),
     };
-    let r = hxl(a, &j.h(), &format!("cd \"{}\" && {co}{{ to {CIT} bash -c {}\n}} 2>&1; e=$?; git checkout -q -f -- . 2>/dev/null; git clean -fdq 2>/dev/null; echo \"[exit $e]\"", dir(a, j), q(&c)), CIT + 120, Some(&ln)).await;
+    let r = hxl(a, &j.h(), &format!("cd \"{}\" && {co}( {sec_pre} to {CIT} bash -c {}\n) 2>&1; e=$?; git checkout -q -f -- . 2>/dev/null; git clean -fdq 2>/dev/null; echo \"[exit $e]\"", dir(a, j), q(&c)), CIT + 120, Some(&ln)).await;
     a.lv.lock().unwrap().cil.remove(&id);
-    let o = r.o;
+    let o = crate::mcp::scrub_secrets(&r.o, &secs);
     let e = Regex::new(r"\[exit (\d+)\]\s*$").unwrap().captures(&o).and_then(|m| m[1].parse::<i32>().ok()).unwrap_or(if r.c == 0 { -1 } else { r.c });
     (e, o)
 }
@@ -792,7 +831,7 @@ fn fixp(a: &Ax, j: &Job, fb: &str) -> String {
         if j.feat() { "Implementation plan" } else { "Repro result" },
         j.d["repro"],
         if fb.is_empty() { String::new() } else { format!("\n\nYour previous attempt was rejected by the pipeline:\n{fb}\nThe branch still contains your previous commits; fix the problems and make sure there are exactly two commits (test, fix) on top of the base commit.") },
-        format!("{}{}",rules(a, j),crate::quality::context(j))
+        format!("{}{}{}", rules(a, j), answers_context(j), crate::quality::context(j))
     )
 }
 
@@ -847,6 +886,7 @@ async fn fix(a: &Ax, j: &mut Job, fb0: String, k0: u64) -> R<Value> {
             Ok(v) => v,
             Err(X::Back(e)) => return Err(X::Back(e)),
             Err(X::Drop(e)) => return Err(X::Drop(e)),
+            Err(X::NeedUser(q)) => return Err(X::NeedUser(q)),
             Err(e) if crate::routing::enabled(a) => { fb = format!("Model attempt failed: {e}. Inspect the existing tree and preserve useful work."); continue; }
             Err(e) => return Err(e),
         };
@@ -1363,7 +1403,7 @@ async fn resume(a: &Ax, j: &mut Job) -> R<Value> {
 }
 
 fn idle_all(a: &Ax, id: i64) {
-    for w in ["repro", "fixer", "ci", "reviewer", "submit", "hunter"] {
+    for w in ["architect", "repro", "fixer", "design_fixer", "tester", "ci", "reviewer", "submit", "hunter"] {
         let b = a.lv.lock().unwrap().w.get(w).map(|x| x.job == Some(id)).unwrap_or(false);
         if b {
             a.st(w, "idle", None, "");
@@ -1441,7 +1481,7 @@ async fn go(a: &Ax, id: i64, h: &str) {
                     a.db.kd(&k);
                 }
             }
-            if j.kind == "fix" {
+            if j.kind == "fix" && j.d["paused_stage"].as_str() != Some("fix") {
                 stage(a, "repro", || race(a, &j, "before repro")).await?;
                 let mut jj = j.clone();
                 stage(a, "repro", || {
@@ -1456,6 +1496,17 @@ async fn go(a: &Ax, id: i64, h: &str) {
                 j = jj;
             }
             kill(a, &j)?;
+            let paused_stage = j.d["paused_stage"].as_str().unwrap_or("").to_string();
+            if !paused_stage.is_empty() {
+                j.d.as_object_mut().map(|o| o.remove("paused_stage"));
+                a.db.jd(&j);
+            }
+            let resume_fb = if paused_stage == "fix" {
+                "Resumed after user answered your question; inspect user-answers and existing WIP commits on this branch, preserving useful work and organizing final commits to satisfy repository rules.".to_string()
+            } else {
+                String::new()
+            };
+            let resume_k0 = if paused_stage == "fix" { j.d["k"].as_u64().unwrap_or(0) } else { 0 };
             stage(a, "fixer", || race(a, &j, "before fix")).await?;
             let mut jj = j.clone();
             if j.kind == "rebase" {
@@ -1471,8 +1522,9 @@ async fn go(a: &Ax, id: i64, h: &str) {
             } else {
                 stage(a, "fixer", || {
                     let mut k = jj.clone();
+                    let fb_c = resume_fb.clone();
                     async move {
-                        fix(a, &mut k, String::new(), 0).await?;
+                        fix(a, &mut k, fb_c, resume_k0).await?;
                         Ok(k)
                     }
                 })
@@ -1535,6 +1587,23 @@ async fn go(a: &Ax, id: i64, h: &str) {
                 clean(a, &j).await;
             }
             idle_all(a, id);
+        }
+        Err(X::NeedUser(qu)) => {
+            let mut jj = a.db.jg(id).unwrap_or(j.clone());
+            let paused_st = jj.st.clone();
+            let br = jj.s("br");
+            if !jj.h().is_empty() && !br.is_empty() {
+                let _ = x(a, &jj, &format!("if [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then git add -A && git commit -qm {}; fi", q("wip(ao): paused waiting for user input")), 120).await;
+                jj.d["rp"] = json!(true);
+            }
+            jj.d["paused_stage"] = json!(paused_st);
+            let q_text = qu["question"].as_str().unwrap_or("Input required").to_string();
+            a.db.jset(id, &[("st", json!("need_user")), ("why", json!(crate::sh::head(&q_text, 240))), ("d", jj.d.clone()), ("question_json", json!(qu.to_string()))]);
+            if let Some(pid) = jj.project_id {
+                a.db.pset(pid, &[("st", json!("need_user"))]);
+            }
+            idle_all(a, id);
+            a.note("User input needed", &format!("{}: {}", jj.tag(), crate::sh::head(&q_text, 160)), 3);
         }
         Err(X::Host(hh, m)) => {
             crate::net::down(a, &hh);

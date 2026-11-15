@@ -35,12 +35,74 @@ pub fn defs() -> Vec<(&'static str, &'static str, Value)> {
         ("grep", "Search tracked files with git grep -n -E. Optional path or glob to narrow.", json!({"type": "object", "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}}, "required": ["pattern"]})),
         ("ls", "List a directory in the repo.", json!({"type": "object", "properties": {"path": {"type": "string"}}})),
         ("sh", "Run a shell command (bash) in the repo root on the build machine. For builds, tests and git (no push). Output is truncated to the last 30000 chars. Default timeout 20 min, max 60; free-first model commands are capped at 3 min.", json!({"type": "object", "properties": {"cmd": {"type": "string"}, "min": {"type": "number"}}, "required": ["cmd"]})),
+        ("ask_user", "Pause the current job and ask the user for missing credentials, API keys, design decisions, or human assistance. Provide a concise question; set secret=true and env_name (UPPER_SNAKE_CASE) when asking for a password, token, or API key so it is encrypted in the vault and injected into shell commands automatically.", json!({"type": "object", "properties": {"question": {"type": "string"}, "why": {"type": "string"}, "secret": {"type": "boolean"}, "env_name": {"type": "string"}, "choices": {"type": "array", "items": {"type": "string"}}}, "required": ["question"]})),
     ]
+}
+
+const RESERVED_ENV: &[&str] = &[
+    "PATH", "HOME", "SHELL", "USER", "PWD", "TERM", "LANG", "LC_ALL",
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
+    "GIT_CONFIG", "GIT_SSH_COMMAND", "GIT_ASKPASS", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    "APOLLO_OFFICE_VAULT", "VIRTUAL_ENV",
+];
+
+pub fn valid_env_name(name: &str) -> bool {
+    let ok = regex::Regex::new(r"^[A-Z_][A-Z0-9_]{1,60}$").unwrap().is_match(name);
+    ok && !RESERVED_ENV.contains(&name)
+}
+
+pub fn job_secrets(a: &Ax, job_id: Option<i64>) -> Vec<(String, String)> {
+    let Some(id) = job_id else { return vec![] };
+    let pat = format!("sec:jobenv:{id}:%");
+    let prefix = format!("sec:jobenv:{id}:");
+    let rows = a.db.all("select k from kv where k like ? order by k", crate::pa![pat]);
+    let mut out = vec![];
+    for row in rows {
+        let Some(k) = row["k"].as_str() else { continue };
+        let Some(env_name) = k.strip_prefix(&prefix) else { continue };
+        if !valid_env_name(env_name) {
+            continue;
+        }
+        if let Ok(val) = crate::vault::get(a, &format!("jobenv:{id}:{env_name}")) {
+            if !val.is_empty() {
+                out.push((env_name.to_string(), val));
+            }
+        }
+    }
+    out
+}
+
+pub fn shell_env_prefix(secs: &[(String, String)]) -> String {
+    let mut parts = vec![];
+    for (k, v) in secs {
+        if valid_env_name(k) {
+            parts.push(format!("export {k}={};", q(v)));
+        }
+    }
+    parts.join(" ")
+}
+
+pub fn scrub_secrets(s: &str, secs: &[(String, String)]) -> String {
+    if secs.is_empty() || s.is_empty() {
+        return s.to_string();
+    }
+    let mut sorted: Vec<&(String, String)> = secs.iter().filter(|(_, v)| v.len() >= 4).collect();
+    sorted.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    let mut out = s.to_string();
+    for (k, v) in sorted {
+        out = out.replace(v.as_str(), &format!("[REDACTED:{k}]"));
+    }
+    out
 }
 
 pub async fn call(a: &Ax, r: &Rn, n: &str, g: &Value) -> Result<String, String> {
     let d = &r.dir;
     let s = |k: &str| g[k].as_str().unwrap_or("").to_string();
+    if let Some(aq) = &r.ask_q {
+        if aq.lock().unwrap().is_some() && matches!(n, "write" | "edit" | "sh" | "ask_user") {
+            return Err("job is pausing for user input; stop calling tools and explain what you asked".into());
+        }
+    }
     if !r.w.is_empty() {
         let x = match n {
             "sh" => s("cmd"),
@@ -100,10 +162,49 @@ pub async fn call(a: &Ax, r: &Rn, n: &str, g: &Value) -> Result<String, String> 
             // The controller already prepared this project environment. Make it
             // the default for model commands too, including commands that cd
             // into a subdirectory. Never source repository activation scripts.
+            let secs = job_secrets(a, r.job);
+            let sec_pre = shell_env_prefix(&secs);
             let env = "if [ -x .venv/bin/python ]; then export VIRTUAL_ENV=\"$PWD/.venv\"; export PATH=\"$PWD/.venv/bin:$PATH\"; fi";
-            let o = hx(a, &r.h, &format!("cd \"{d}\" && {{ {env}; to {} bash -c {}\n}} 2>&1; echo \"[exit $?]\"", m * 60, q(&c)), m * 60 + 30).await;
-            let t = o.all();
+            let o = hx(a, &r.h, &format!("cd \"{d}\" && ( {sec_pre} {env}; to {} bash -c {}\n) 2>&1; echo \"[exit $?]\"", m * 60, q(&c)), m * 60 + 30).await;
+            let t = scrub_secrets(&o.all(), &secs);
             Ok(if t.len() > 30000 { format!("…{}", crate::sh::last(&t, 30000)) } else { t })
+        }
+        "ask_user" => {
+            let question = s("question").trim().to_string();
+            if question.is_empty() {
+                return Err("question must not be empty".into());
+            }
+            let secret = g["secret"].as_bool().unwrap_or(false);
+            let env_name = s("env_name").trim().to_string();
+            if secret {
+                if !valid_env_name(&env_name) {
+                    return Err("secret ask_user requires env_name in UPPER_SNAKE_CASE (2-61 chars, not a system env var)".into());
+                }
+            } else if !env_name.is_empty() && !valid_env_name(&env_name) {
+                return Err("env_name must be UPPER_SNAKE_CASE (2-61 chars, not a system env var)".into());
+            }
+            let choices: Vec<String> = g["choices"]
+                .as_array()
+                .map(|xs| xs.iter().filter_map(|v| v.as_str().map(|x| x.trim().to_string())).filter(|x| !x.is_empty()).take(8).collect())
+                .unwrap_or_default();
+            let payload = json!({
+                "question": question,
+                "why": s("why").trim().to_string(),
+                "secret": secret,
+                "env_name": env_name,
+                "choices": choices,
+                "worker": r.w,
+            });
+            if let Some(aq) = &r.ask_q {
+                let mut lock = aq.lock().unwrap();
+                if lock.is_none() {
+                    *lock = Some(payload);
+                }
+            }
+            if !r.w.is_empty() {
+                a.say(&r.w, &format!("Paused to ask user: {}", crate::sh::head(&question, 200)), r.job);
+            }
+            Ok("Question queued for user. Stop calling tools now and explain what you asked.".into())
         }
         _ => Err("unknown tool".into()),
     }
@@ -176,15 +277,43 @@ mod t {
         std::fs::write(root.join(".venv/bin/activate"),"echo UNSAFE_ACTIVATION >&2; exit 90\n").unwrap();
         let db=crate::db::Db::mem();db.run("insert into hs(id,on_) values('local',1)",crate::pa![]);
         let a=std::sync::Arc::new(crate::app::App::new(db,root.clone(),1,"x".into()));
-        let r=Rn{h:"local".into(),dir:root.display().to_string(),w:String::new(),md:String::new()};
+        let r=Rn{h:"local".into(),dir:root.display().to_string(),w:String::new(),md:String::new(),..Default::default()};
         let out=call(&a,&r,"sh",&json!({"cmd":"cd tool && python3 && printf '%s' \"$VIRTUAL_ENV\""})).await.unwrap();
         assert!(out.contains("prepared-project-python"),"{out}");assert!(out.contains(&root.join(".venv").display().to_string()),"{out}");
         assert!(!out.contains("UNSAFE_ACTIVATION"));assert!(out.contains("[exit 0]"),"{out}");
-        let missing=Rn{h:"local".into(),dir:root.join("missing").display().to_string(),w:String::new(),md:String::new()};
+        let missing=Rn{h:"local".into(),dir:root.join("missing").display().to_string(),w:String::new(),md:String::new(),..Default::default()};
         let out=call(&a,&missing,"sh",&json!({"cmd":"echo OUTSIDE_WORKSPACE"})).await.unwrap();
         assert!(!out.contains("OUTSIDE_WORKSPACE"),"must not run when cd fails: {out}");
         assert!(out.contains("[exit 1]"),"{out}");
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn ask_user_captures_question_blocks_mutations_and_scrubs_secrets() {
+        std::env::set_var("APOLLO_OFFICE_VAULT", "file");
+        let root = std::env::temp_dir().join(format!("apollo-ask-{}", hex::encode(rand::random::<[u8; 8]>())));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = crate::db::Db::mem();
+        db.run("insert into hs(id,on_) values('local',1)", crate::pa![]);
+        let a = std::sync::Arc::new(crate::app::App::new(db, root.clone(), 1, "x".into()));
+        let aq = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let r = Rn { h: "local".into(), dir: root.display().to_string(), w: "fixer".into(), md: String::new(), job: Some(7), ask_q: Some(aq.clone()) };
+        assert!(call(&a, &r, "ask_user", &json!({"question": "Need key", "secret": true, "env_name": "PATH"})).await.is_err());
+        let ok = call(&a, &r, "ask_user", &json!({"question": "Provide Stripe test key", "why": "Need billing check", "secret": true, "env_name": "STRIPE_TEST_KEY", "choices": ["Skip billing test"]})).await.unwrap();
+        assert!(ok.contains("Question queued"), "{ok}");
+        let captured = aq.lock().unwrap().clone().unwrap();
+        assert_eq!(captured["env_name"], "STRIPE_TEST_KEY");
+        assert_eq!(captured["secret"], true);
+        let blocked = call(&a, &r, "write", &json!({"path": "a.txt", "text": "hi"})).await.unwrap_err();
+        assert!(blocked.contains("pausing for user input"), "{blocked}");
+
+        crate::vault::put(&a, "jobenv:7:STRIPE_TEST_KEY", "sk_test_supersecret999").unwrap();
+        let secs = job_secrets(&a, Some(7));
+        assert_eq!(secs, vec![("STRIPE_TEST_KEY".into(), "sk_test_supersecret999".into())]);
+        let scrubbed = scrub_secrets("got sk_test_supersecret999 back", &secs);
+        assert_eq!(scrubbed, "got [REDACTED:STRIPE_TEST_KEY] back");
+        assert!(shell_env_prefix(&secs).contains("export STRIPE_TEST_KEY='sk_test_supersecret999';"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
