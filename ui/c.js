@@ -19,6 +19,7 @@
     ? `<div class="cm you">${esc(m.t)}</div>`
     : `<div class="cm desk${m.bad ? " bad2" : ""}">${esc(m.t)}${(m.jobs || []).map(jrow).join("")}${(m.errs || []).map((e) => `<div class="ce">Not started: ${esc(e)}</div>`).join("")}</div>`;
   const intro = () => `<div class="ci"><b>Tell the office what you need.</b><p>Describe a bug, ask for a feature, name a GitHub issue, or ask for a bug hunt. The front desk hands it to the right worker and the office does the rest on its own.</p>${A.S && !A.S.nr ? `<p class="bad2">No repository is added yet. Add one under Repos first.</p>` : ""}<div class="cx">${EX.map((x) => `<button type="button">${esc(x)}</button>`).join("")}</div></div>`;
+  $("chW").textContent = A.DWARN || "";
   const draw = () => {
     log.innerHTML = (msgs.length ? msgs.map(bubble).join("") : intro()) + (busy ? `<div class="cm desk wait">The front desk is thinking…</div>` : "");
     log.scrollTop = log.scrollHeight;

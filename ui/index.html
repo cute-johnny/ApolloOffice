@@ -194,6 +194,7 @@ button:disabled { opacity: .55; cursor: default; }
 #chat .cj:hover { border-color: var(--t3); background: var(--h); }
 #chat .cj b { color: var(--ok); font-weight: 600; }
 #chat .ce { margin-top: 7px; font: 11px/1.4 var(--m); color: var(--bad); }
+#chat .cw { flex: none; margin: 8px 10px 0; border-color: color-mix(in srgb, #d9b44a 60%, transparent); background: color-mix(in srgb, #d9b44a 9%, transparent); font-size: 12px; line-height: 1.4; }
 #chat .ci { margin: auto 0; color: var(--t2); font-size: 13px; }
 #chat .ci b { color: var(--t1); font-size: 14px; }
 #chat .ci p { margin: 6px 0 10px; }
@@ -310,6 +311,7 @@ pre.df .ad { color: var(--ok); } pre.df .rm { color: var(--bad); } pre.df .hh { 
 <script src="o.js"></script>
 <div id="chat" hidden>
   <div class="chh"><h3>Front desk</h3><button id="chG" title="Model and provider for the front desk">Model</button><button id="chN" title="Forget this conversation and start over">New chat</button><button id="chX">Close</button></div>
+  <div class="warn cw" id="chW" role="note"></div>
   <div class="chl" id="chL" aria-live="polite"></div>
   <form id="chF"><textarea id="chI" placeholder="Describe a bug or a feature, or name an issue…" aria-label="Message to the front desk"></textarea><button class="pri" id="chS">Send</button></form>
 </div>
