@@ -960,7 +960,7 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
             Ok(v) => js(v),
             Err(e) => er(StatusCode::BAD_REQUEST, &e),
         },
-        ("POST", "/api/chat/go") => match crate::desk::go(a, &b) {
+        ("POST", "/api/chat/go") => match crate::desk::go(a, &b).await {
             Ok(v) => js(v),
             Err(e) => er(StatusCode::BAD_REQUEST, &e),
         },
