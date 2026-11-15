@@ -29,11 +29,13 @@
     reviewer: { body: "#d0649f", dark: "#a3437a", light: "#e597c2" },
     submit: { body: "#5cbf6a", dark: "#3d9149", light: "#94dd9e" },
     watcher: { body: "#4fb3e0", dark: "#2f86b0", light: "#8fd2f0" },
+    architect: { body: "#b8952f", dark: "#866b1e", light: "#e7c65a" },
     desk: { body: "#34363d", dark: "#15161a", light: "#7a7f8a" },
   };
-  const NM = { hunter: "Hunter", scout: "Scout", guard: "Guard", vet: "Vet", repro: "Repro", fixer: "Fixer", ci: "CI", design_fixer: "Design Fixer", tester: "Tester", reviewer: "Reviewer", submit: "Submit", watcher: "Watcher", desk: "Front desk" };
+  const NM = { architect: "Architect", hunter: "Hunter", scout: "Scout", guard: "Guard", vet: "Vet", repro: "Repro", fixer: "Fixer", ci: "CI", design_fixer: "Design Fixer", tester: "Tester", reviewer: "Reviewer", submit: "Submit", watcher: "Watcher", desk: "Front desk" };
   window.AO.NM = NM;
   const DESC = {
+    architect: "Designs software architecture and breaks large application prompts into a dependency-ordered milestone DAG on an epic branch.",
     scout: "Scans the open GitHub issues of your repositories and picks the ones that look like fixable bugs or wanted features.",
     guard: "Screens text written by strangers (issues, comments, reviews) for prompt injection before any other worker reads it.",
     vet: "Decides strictly whether one issue is worth a pull request: a clear, testable, unclaimed bug or an accepted feature. Everything else is dropped.",
@@ -471,7 +473,7 @@
   };
   const hm = (t) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   const kt = (n) => (n > 999999 ? (n / 1e6).toFixed(1) + "M" : n > 999 ? Math.round(n / 1000) + "k" : String(n));
-  const STC = { approve: "ok", need_user: "warn", ready: "", vet: "", repro: "work", fix: "work", design: "work", test: "work", ci: "work", review: "work", gate: "work", submit: "work", done: "ok", drop: "bad" };
+  const STC = { approve: "ok", need_user: "warn", plan: "work", ready: "", vet: "", repro: "work", fix: "work", design: "work", test: "work", ci: "work", review: "work", gate: "work", submit: "work", done: "ok", drop: "bad" };
 
   const GEAR = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M9.4 1l.3 1.8c.4.1.8.3 1.1.5l1.5-1 1.4 1.4-1 1.5c.2.3.4.7.5 1.1L15 6.6v2l-1.8.3c-.1.4-.3.8-.5 1.1l1 1.5-1.4 1.4-1.5-1c-.3.2-.7.4-1.1.5L9.4 15h-2l-.3-1.8c-.4-.1-.8-.3-1.1-.5l-1.5 1-1.4-1.4 1-1.5c-.2-.3-.4-.7-.5-1.1L1.8 8.6v-2l1.8-.3c.1-.4.3-.8.5-1.1l-1-1.5 1.4-1.4 1.5 1c.3-.2.7-.4 1.1-.5L7.4 1h2zM8.4 5.6a2 2 0 100 4 2 2 0 000-4z"/></svg>`;
   window.AO.GEAR = GEAR;
@@ -516,7 +518,7 @@
 
   const rn = (j) => (j.repo.split("/")[1] || j.repo) + (j.num ? "#" + j.num : "");
   const sel = new Set();
-  const jrow = (j, x) => `<div class="row${j.st === "approve" ? " apr" : ""}">${j.st === "approve" && x ? `<input type="checkbox" class="bk" data-k="${j.id}" ${sel.has(j.id) ? "checked" : ""} aria-label="select">` : ""}<span class="pill ${STC[j.st] || ""}">${esc(j.kind !== "fix" ? j.kind + "·" + j.st : j.st)}</span><div class="ti"><a class="a" href="#" data-j="${j.id}">${esc(j.title)}</a><div class="w">${esc(j.st === "ci" && S.cil[j.id] ? S.cil[j.id] : j.why || "")}</div></div><span class="rp">${esc(rn(j))}${j.st === "approve" ? ` <button class="go" data-j="${j.id}">review</button>` : ""}${j.st === "need_user" ? ` <button class="go" data-j="${j.id}">reply</button>` : ""}${x && j.st !== "approve" ? ` <button class="x" data-d="${j.id}" title="drop">✕</button>` : ""}${!x && j.st === "drop" && ["fix", "build", "design_fix", "test_app"].includes(j.kind) ? ` <button class="x" data-rq="${j.id}" title="try again">↻</button>` : ""}</span></div>`;
+  const jrow = (j, x) => `<div class="row${j.st === "approve" ? " apr" : ""}">${j.st === "approve" && x ? `<input type="checkbox" class="bk" data-k="${j.id}" ${sel.has(j.id) ? "checked" : ""} aria-label="select">` : ""}<span class="pill ${STC[j.st] || ""}">${esc(j.kind !== "fix" ? j.kind + "·" + j.st : j.st)}</span><div class="ti"><a class="a" href="#" data-j="${j.id}">${esc(j.title)}</a><div class="w">${esc(j.st === "ci" && S.cil[j.id] ? S.cil[j.id] : j.why || "")}</div></div><span class="rp">${esc(rn(j))}${j.st === "approve" ? ` <button class="go" data-j="${j.id}">review</button>` : ""}${j.st === "need_user" ? ` <button class="go" data-j="${j.id}">reply</button>` : ""}${x && j.st !== "approve" ? ` <button class="x" data-d="${j.id}" title="drop">✕</button>` : ""}${!x && j.st === "drop" && ["fix", "build", "design_fix", "test_app", "architect", "epic_pr"].includes(j.kind) ? ` <button class="x" data-rq="${j.id}" title="try again">↻</button>` : ""}</span></div>`;
 
   let lW = "", lQ = "", lWrap = false, lastLog = "";
   try { lWrap = localStorage.getItem("ao.lw") === "1"; } catch {}
@@ -573,6 +575,13 @@
     const a = S.n;
     $("cQ").innerHTML = `vet <b>${a.vet || 0}</b> · ready <b>${a.ready || 0}</b> · approve <b>${a.approve || 0}</b> · done <b>${a.done || 0}</b>`;
     $("bPause").textContent = o.man ? "Resume office" : "Pause office";
+    const bp = $("bProj");
+    if (bp) {
+      const ps = S.projects || [];
+      const act = ps.filter((p) => !["done", "drop"].includes(p.st));
+      const attn = act.filter((p) => ["waiting_milestone", "need_user", "budget_reached"].includes(p.st)).length;
+      bp.textContent = attn ? `Projects (${act.length} · ${attn} waiting)` : act.length ? `Projects (${act.length})` : ps.length ? `Projects (${ps.length})` : "Projects";
+    }
     $("ban").hidden = !S.star;
     document.body.classList.toggle("sb", !!S.star);
   };

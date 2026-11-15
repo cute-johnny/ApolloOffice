@@ -244,8 +244,8 @@
     }
   };
 
-  const RK = { scout: [["scout", "Model"]], guard: [["guard", "Model"]], vet: [["vet", "Model"]], watcher: [["watcher", "Model"]], hunter: [["hunter", "Model"]], reviewer: [["reviewer", "Model"]], repro: [["repro", "First try"], ["repro2", "Second try"]], fixer: [["fixer", "Model"], ["big", "Complex bugs"]], design_fixer: [["design_fixer", "Model"]], tester: [["tester", "Model"]], desk: [["desk", "Model"]] };
-  const TOOLS = ["hunter", "repro", "fixer", "design_fixer", "tester"];
+  const RK = { architect: [["architect", "Model"]], scout: [["scout", "Model"]], guard: [["guard", "Model"]], vet: [["vet", "Model"]], watcher: [["watcher", "Model"]], hunter: [["hunter", "Model"]], reviewer: [["reviewer", "Model"]], repro: [["repro", "First try"], ["repro2", "Second try"]], fixer: [["fixer", "Model"], ["big", "Complex bugs"]], design_fixer: [["design_fixer", "Model"]], tester: [["tester", "Model"]], desk: [["desk", "Model"]] };
+  const TOOLS = ["architect", "hunter", "repro", "fixer", "design_fixer", "tester"];
   const split = (v) => { const i = (v || "").indexOf(":"), p = i > 0 ? v.slice(0, i) : ""; return cfg.prov.some((x) => x.id === p) ? [p, v.slice(i + 1)] : ["cc", v || ""]; };
   const join = (p, m) => (p === "cc" ? m : p + ":" + m);
 
@@ -322,7 +322,7 @@
         <div class="hint">Keys are stored encrypted on this computer. Claude Code and Codex use their own CLI logins. Pick a model per worker under Models below.</div>
       </div></div></div>
       <div data-tab="md" class="sec"><h4>Models</h4><div class="box"><div class="fm" style="margin:0">
-        ${["desk", "scout", "guard", "vet", "hunter", "repro", "fixer", "design_fixer", "tester", "reviewer", "watcher"].map((w) => `<label>${esc(A.NM?.[w] || w)}</label><div class="ck"><span style="flex:1">${RK[w].map(([k, l]) => esc((RK[w].length > 1 ? l + ": " : "") + (A.mdn ? A.mdn(s.md[k]) : s.md[k]))).join(" · ")}</span><button type="button" data-role="${w}">Change</button></div>`).join("")}
+        ${["desk", "architect", "scout", "guard", "vet", "hunter", "repro", "fixer", "design_fixer", "tester", "reviewer", "watcher"].map((w) => `<label>${esc(A.NM?.[w] || w)}</label><div class="ck"><span style="flex:1">${RK[w].map(([k, l]) => esc((RK[w].length > 1 ? l + ": " : "") + (A.mdn ? A.mdn(s.md[k]) : s.md[k]))).join(" · ")}</span><button type="button" data-role="${w}">Change</button></div>`).join("")}
         <div class="hint">Also reachable with the gear on each worker's card.</div>
       </div></div></div>
       <div data-tab="gen" class="sec"><h4>Sign in</h4><div class="box">${cfg.google ? `<div class="ck"><b class="ok2">Google</b> ${esc(cfg.google)} can sign in.</div><div class="acts"><button type="button" class="dng" id="gu">Disconnect Google</button></div>` : `<div class="ck">Sign in with a one-time link from <code>apollo-office login-link</code>, or connect a Google account.</div><div class="acts"><button type="button" id="gl">Connect Google account</button></div>`}</div></div>
@@ -514,7 +514,12 @@
     const tag = (j.repo.split("/")[1] || j.repo) + (j.num ? "#" + j.num : "");
     const cs = j.cost && j.cost.n ? `<div class="msg">Cost: ${j.cost.usd != null ? usd(j.cost.usd) + " API" : ""}${j.cost.usd != null && j.cost.val != null ? " · " : ""}${j.cost.val != null ? usd(j.cost.val) + " login value" : ""}${j.cost.usd == null && j.cost.val == null ? "unknown" : ""} · ${Math.round((j.cost.ti || 0) / 1000)}k in, ${Math.round((j.cost.tou || 0) / 1000)}k out</div>` : "";
     const ev = (j.ev || []).map((e) => `<div><span class="tm">${new Date(e.t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span><span>${esc(e.w)}</span><span>${esc(e.m)}</span></div>`).join("");
-    const artHtml = j.artifacts?.length ? `<div class="sec"><h4>Screenshots &amp; artifacts</h4><div class="artgrid">${j.artifacts.map((f) => `<figure class="artcard"><a href="/api/artifact?job=${id}&file=${encodeURIComponent(f)}" target="_blank" rel="noopener"><img src="/api/artifact?job=${id}&file=${encodeURIComponent(f)}" loading="lazy" alt="${esc(f)}"></a><figcaption title="${esc(f)}">${esc(f)}</figcaption></figure>`).join("")}</div></div>` : "";
+    const artCards = [
+      ...(j.artifacts || []).map((f) => `<figure class="artcard"><a href="/api/artifact?job=${id}&file=${encodeURIComponent(f)}" target="_blank" rel="noopener"><img src="/api/artifact?job=${id}&file=${encodeURIComponent(f)}" loading="lazy" alt="${esc(f)}"></a><figcaption title="${esc(f)}">${esc(f)}</figcaption></figure>`),
+      ...(j.milestone_artifact_jobs || []).flatMap((mj) => (mj.files || []).map((f) => `<figure class="artcard"><a href="/api/artifact?job=${mj.job_id}&file=${encodeURIComponent(f)}" target="_blank" rel="noopener"><img src="/api/artifact?job=${mj.job_id}&file=${encodeURIComponent(f)}" loading="lazy" alt="${esc(f)}"></a><figcaption title="M${mj.milestone}: ${esc(f)}">M${mj.milestone} · ${esc(f)}</figcaption></figure>`)),
+    ];
+    const artHtml = artCards.length ? `<div class="sec"><h4>Screenshots &amp; artifacts</h4><div class="artgrid">${artCards.join("")}</div></div>` : "";
+    const msSummaryHtml = j.milestone_summaries?.length ? `<div class="sec"><h4>Milestones delivered</h4><div class="box">${j.milestone_summaries.map((s) => `<div class="ck" style="margin:3px 0">${esc(s)}</div>`).join("")}</div></div>` : "";
     const repParts = [];
     if (j.design && (j.design.summary || j.design.issues?.length)) {
       repParts.push(`<div class="box"><div class="hd2"><b>Design Fixer</b><span class="pill ${j.design.ok === false ? "bad" : "ok"}">${j.design.skipped ? "skipped" : j.design.ok === false ? "issues" : "ok"}</span></div><div class="msg">${esc(j.design.summary || "")}</div>${j.design.issues?.length ? `<div class="hint" style="margin-top:4px">${j.design.issues.map((x) => esc(typeof x === "string" ? x : x.msg || JSON.stringify(x))).join(" · ")}</div>` : ""}</div>`);
@@ -524,13 +529,15 @@
     }
     const repHtml = repParts.length ? `<div class="sec"><h4>Visual &amp; E2E Verification</h4>${repParts.join("")}</div>` : "";
     if (j.st === "approve") {
-      B.innerHTML = `<div class="sec"><div class="box"><div class="hd2"><b>${esc(j.repo)}${j.num ? " #" + j.num : j.ext ? " (reported by " + esc(j.ext) + ")" : " (found by Hunter)"}</b>${j.url ? `<a class="a" href="#" data-u="${esc(j.url)}">${j.num ? "open issue" : "open repository"}</a>` : ""}</div><div class="msg">Built and tested on ${esc(j.h || "")}. Nothing is on GitHub yet.</div>${cs}</div></div>
+      B.innerHTML = `<div class="sec"><div class="box"><div class="hd2"><b>${esc(j.repo)}${j.num ? " #" + j.num : j.kind === "epic_pr" ? " (full-app epic)" : j.ext ? " (reported by " + esc(j.ext) + ")" : " (found by Hunter)"}</b>${j.url ? `<a class="a" href="#" data-u="${esc(j.url)}">${j.num ? "open issue" : "open repository"}</a>` : ""}</div><div class="msg">Built and tested on ${esc(j.h || "")}. Nothing is on GitHub yet.</div>${cs}${j.project_id ? `<div class="acts" style="margin-top:8px"><button type="button" data-openproj="${j.project_id}">View Project DAG</button></div>` : ""}</div></div>
       <div class="sec"><h4>Pull request</h4><input type="text" id="pt" value="${esc(j.pt || j.title)}"><textarea id="pb" style="min-height:220px;margin-top:8px">${esc(j.pb || "")}</textarea></div>
       ${j.proof ? `<div class="sec"><h4>Proof</h4><pre class="df">${esc((j.proof.a || "") + "\n\n" + (j.proof.b || ""))}</pre></div>` : ""}
-      ${repHtml}${artHtml}
+      ${msSummaryHtml}${repHtml}${artHtml}
       <div class="sec"><h4>Diff</h4>${dview(j.df)}</div>
       <div class="acts"><button class="pri" id="ba">Submit pull request</button><button class="dng" id="bd">Drop</button></div><div class="msg" id="jm"></div>
       <div class="sec" style="margin-top:20px"><h4>Log</h4><div class="log">${ev}</div></div>`;
+      const opBtn = B.querySelector("[data-openproj]");
+      if (opBtn) opBtn.onclick = () => projects();
       $("ba").onclick = async () => {
         busy($("ba"), true, "Submitting…");
         const r = await post({ a: "approve", id, pt: $("pt").value, pb: $("pb").value });
@@ -555,11 +562,13 @@
     </div></div>` : "";
     const ansHtml = (j.answers?.length || j.secret_envs?.length) ? `<div class="sec"><h4>User answers &amp; secrets</h4><div class="box">${(j.answers || []).map((a) => `<div class="ck" style="margin:3px 0"><b>${esc(a.q || "Question")}:</b> <span>${a.secret ? `encrypted as $${esc(a.env_name || "")}` : esc(a.a || "")}</span></div>`).join("")}${j.secret_envs?.length ? `<div class="hint" style="margin-top:4px">Stored Vault env vars: ${j.secret_envs.map((x) => "$" + esc(x)).join(", ")}</div>` : ""}</div></div>` : "";
     B.innerHTML = `${needBox}<div class="sec"><div class="box"><div class="hd2"><b>${esc(j.title)}</b><span class="pill">${esc(j.st)}</span></div><div class="msg">${esc(j.repo)} ${esc(tag)} · ${esc(j.kind)}${j.h ? " · " + esc(j.h) : ""}\n${esc(j.why || "")}</div>${cs}
-      <div class="acts">${j.url ? `<button data-u="${esc(j.url)}">Open on GitHub</button>` : ""}${!["done", "drop"].includes(j.st) ? `<button class="dng" data-d="${id}">Drop</button>` : ""}${j.st === "drop" && ["fix", "build", "design_fix", "test_app"].includes(j.kind) ? `<button data-rq="${id}">Try again</button>` : ""}</div></div></div>
+      <div class="acts">${j.url ? `<button data-u="${esc(j.url)}">Open on GitHub</button>` : ""}${j.project_id ? `<button type="button" data-openproj="${j.project_id}">Project #${j.project_id}</button>` : ""}${!["done", "drop"].includes(j.st) ? `<button class="dng" data-d="${id}">Drop</button>` : ""}${j.st === "drop" && ["fix", "build", "design_fix", "test_app", "architect", "epic_pr"].includes(j.kind) ? `<button data-rq="${id}">Try again</button>` : ""}</div></div></div>
       ${ansHtml}
-      ${repHtml}${artHtml}
+      ${msSummaryHtml}${repHtml}${artHtml}
       ${j.df ? `<div class="sec"><h4>Diff</h4>${dview(j.df)}</div>` : ""}
       <div class="sec"><h4>Log</h4><div class="log">${ev || `<div class="empty">nothing yet</div>`}</div></div>`;
+    const opBtn2 = B.querySelector("[data-openproj]");
+    if (opBtn2) opBtn2.onclick = () => projects();
     if (j.st === "need_user") {
       B.querySelectorAll(".nqch").forEach((btn) => { btn.onclick = () => { $("nqa").value = btn.dataset.v || ""; $("nqa").focus(); }; });
       $("nqb").onclick = async () => {
@@ -603,6 +612,100 @@
     $("bp").onclick = repos;
   };
 
+  let lastProjSig = "";
+  const projects = async (quiet) => {
+    show("Projects", "proj");
+    if (!quiet) B.innerHTML = `<div class="empty">loading…</div>`;
+    const r = await get("/api/projects");
+    if (cur !== "proj") return;
+    if (r.error) { B.innerHTML = `<div class="empty bad2">${esc(r.error)}</div>`; return; }
+    const ps = r.projects || [];
+    if (!ps.length) {
+      B.innerHTML = `<div class="sec"><div class="box"><div class="hd2"><b>No multi-milestone projects yet</b></div><div class="msg">Ask the Front Desk boss to plan and build a full app (or upload a large spec). The Architect will split it into ordered milestones and track progress here.</div></div></div>`;
+      return;
+    }
+    B.innerHTML = `<div class="acts" style="margin:0 0 10px"><button type="button" id="prefresh">Refresh</button></div>` + ps.map((p) => {
+      const spent = Number(p.spent_usd || 0);
+      const bud = Number(p.budget_usd || 0);
+      const pct = bud > 0 ? Math.min(100, Math.round((spent / bud) * 100)) : 0;
+      const hi = bud > 0 && spent >= bud * 0.9;
+      const finished = p.st === "done" || p.st === "drop";
+      const ms = (p.milestones || []).map((m) => {
+        let deps = [];
+        try { deps = Array.isArray(m.depends_on) ? m.depends_on : JSON.parse(m.depends_on || "[]"); } catch {}
+        const lbl = m.kind === "architect" ? "PLAN" : m.kind === "epic_pr" ? "PR" : "M" + m.milestone_idx;
+        const depTxt = deps.length ? ` (after #${deps.join(", #")})` : "";
+        const right = m.url && m.kind === "epic_pr" && m.st === "done"
+          ? `<a class="pill ok" href="#" data-u="${esc(m.url)}">PR #${m.pr || ""}</a>`
+          : `<span class="pill">${esc(m.st)}</span>`;
+        return `<div class="mstep"><b>${esc(lbl)}</b><a href="#" data-pj="${m.id}" title="${esc(m.why || m.title)}">${esc(m.title)}${esc(depTxt)}${m.st === "drop" && m.why ? " — " + esc(m.why) : ""}</a>${right}</div>`;
+      }).join("");
+      return `<div class="sec"><div class="box" data-pid="${p.id}">
+        <div class="hd2"><b>${esc(p.title || ("Project #" + p.id))}</b><span class="pill">${esc(p.st)}</span></div>
+        <div class="msg">${esc(p.repo)}${p.epic_branch ? " · branch " + esc(p.epic_branch) : ""} · spent ${usd(spent)}${bud > 0 ? " / " + usd(bud) + " (" + pct + "%)" : " (no cap)"}</div>
+        ${bud > 0 ? `<div class="pjbar${hi ? " hi" : ""}"><i style="width:${pct}%"></i></div>` : ""}
+        ${p.arch_json?.summary ? `<div class="hint" style="margin-top:4px">${esc(p.arch_json.summary)}</div>` : ""}
+        ${p.arch_json?.stack ? `<div class="hint" style="margin-top:2px">Stack: ${esc(p.arch_json.stack)}</div>` : ""}
+        ${ms ? `<div class="mgrid">${ms}</div>` : ""}
+        ${finished ? "" : `<div class="acts" style="margin-top:8px;align-items:center">
+          <label class="ck"><input type="checkbox" data-pe="${p.id}" ${p.pause_each ? "checked" : ""}> Pause after each milestone</label>
+          <label class="ck">Budget $<input type="number" step="1" min="0" data-bg="${p.id}" value="${esc(String(bud))}" style="width:76px;padding:3px 6px"></label>
+          <button type="button" data-psave="${p.id}">Save</button>
+        </div>`}
+        <div class="acts">
+          ${["waiting_milestone", "paused", "budget_reached"].includes(p.st) ? `<button type="button" class="pri" data-pop="continue" data-pbtn="${p.id}">Continue Next Milestone</button>` : ""}
+          ${["running", "planning"].includes(p.st) ? `<button type="button" data-pop="pause" data-pbtn="${p.id}">Pause After Current</button>` : ""}
+          ${finished ? "" : `<button type="button" class="dng" data-pdrop="${p.id}">Drop Project</button>`}
+        </div>
+        <div class="msg" id="pm${p.id}"></div>
+      </div></div>`;
+    }).join("");
+
+    if ($("prefresh")) $("prefresh").onclick = () => projects(false);
+    B.querySelectorAll("[data-pj]").forEach((a) => {
+      a.onclick = (e) => { e.preventDefault(); job(+a.dataset.pj); };
+    });
+    const readInputs = (pid) => ({
+      pause_each: !!B.querySelector(`[data-pe="${pid}"]`)?.checked,
+      budget_usd: Math.max(0, Number(B.querySelector(`[data-bg="${pid}"]`)?.value || 0)),
+    });
+    B.querySelectorAll("[data-psave]").forEach((btn) => {
+      btn.onclick = async () => {
+        const pid = +btn.dataset.psave;
+        const p = ps.find((x) => x.id === pid);
+        const inp = readInputs(pid);
+        const canResume = p?.st === "budget_reached" && (inp.budget_usd === 0 || inp.budget_usd > Number(p.spent_usd || 0));
+        busy(btn, true, "Saving…");
+        const res = await post({ id: pid, op: "set", ...inp, resume: canResume }, "/api/project");
+        if (res.error) { busy(btn, false, "Save"); if ($("pm" + pid)) { $("pm" + pid).className = "msg bad2"; $("pm" + pid).textContent = res.error; } return; }
+        A.apply(res); await projects(true);
+        if ($("pm" + pid)) { $("pm" + pid).className = "msg ok2"; $("pm" + pid).textContent = canResume ? "Saved and resumed." : "Saved."; }
+      };
+    });
+    B.querySelectorAll("[data-pop]").forEach((btn) => {
+      btn.onclick = async () => {
+        const pid = +btn.dataset.pbtn, op = btn.dataset.pop;
+        const inp = readInputs(pid);
+        busy(btn, true, op === "continue" ? "Starting…" : "Pausing…");
+        const res = await post({ id: pid, op, ...inp }, "/api/project");
+        if (res.error) { busy(btn, false, op === "continue" ? "Continue Next Milestone" : "Pause After Current"); if ($("pm" + pid)) { $("pm" + pid).className = "msg bad2"; $("pm" + pid).textContent = res.error; } return; }
+        A.apply(res); await projects(true);
+      };
+    });
+    B.querySelectorAll("[data-pdrop]").forEach((btn) => {
+      btn.onclick = async () => {
+        if (btn.dataset.sure !== "1") { btn.dataset.sure = "1"; btn.textContent = "Click again to drop"; return; }
+        const pid = +btn.dataset.pdrop;
+        busy(btn, true, "Dropping…");
+        const res = await post({ id: pid, op: "drop" }, "/api/project");
+        if (res.error) { busy(btn, false, "Drop Project"); if ($("pm" + pid)) { $("pm" + pid).className = "msg bad2"; $("pm" + pid).textContent = res.error; } return; }
+        A.apply(res); await projects(true);
+      };
+    });
+  };
+
+  if ($("bProj")) $("bProj").onclick = () => projects(false);
+  A.projects = projects;
   $("bRepos").onclick = repos;
   $("bCost").onclick = costs;
   $("bHosts").onclick = hosts;
@@ -618,6 +721,10 @@
     if (cur === "job" && jid && !dr.hidden) {
       const q = s.q.find((x) => x.id === jid);
       if (!q && T.textContent.startsWith("Review")) hide();
+    }
+    if (cur === "proj" && !dr.hidden && !B.querySelector("input:focus") && !B.querySelector('[data-sure="1"]')) {
+      const sig = JSON.stringify((s.projects || []).map((p) => [p.id, p.st, p.spent_usd, p.budget_usd, p.pause_each])) + "|" + JSON.stringify((s.q || []).filter((x) => x.project_id).map((x) => [x.id, x.st]));
+      if (sig !== lastProjSig) { lastProjSig = sig; projects(true); }
     }
   };
 })();

@@ -289,6 +289,12 @@ pre.df .ad { color: var(--ok); } pre.df .rm { color: var(--bad); } pre.df .hh { 
 .artcard { margin: 0; border: 1px solid var(--l); border-radius: 6px; background: var(--g); overflow: hidden; }
 .artcard img { display: block; width: 100%; height: 118px; object-fit: cover; object-position: top center; background: #000; }
 .artcard figcaption { padding: 5px 7px; font: 11px/1.3 var(--m); color: var(--t2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pjbar { height: 6px; border-radius: 99px; background: var(--l); overflow: hidden; margin: 6px 0; }
+.pjbar i { display: block; height: 100%; background: var(--info); }
+.pjbar.hi i { background: var(--bad); }
+.mgrid { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
+.mstep { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 5px 7px; border-radius: 6px; background: var(--p); border: 1px solid var(--l); font: 11px/1.35 var(--m); }
+.mstep a { color: var(--t1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 1100px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } .tile { height: 56px; } .tile .sy { -webkit-line-clamp: 1; } }
 @media (max-width: 860px) { body { grid-template-rows: auto auto minmax(0, 1.1fr); } body.sb { grid-template-rows: auto auto auto minmax(0, 1.1fr); } main { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); } .side { grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr); } .side .card:last-child { display: none; } .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } #cQ, #cHo { display: none; } }
 @media (max-width: 700px) {
@@ -322,6 +328,7 @@ pre.df .ad { color: var(--ok); } pre.df .rm { color: var(--bad); } pre.df .hh { 
   <span class="chip" id="cQ"></span>
   <span class="sp"></span>
   <button id="bAsk" title="Tell the office what you need in your own words">Ask the office</button>
+  <button id="bProj" title="Multi-milestone app builds and DAG progress">Projects</button>
   <button id="bCost">Costs</button>
   <button id="bRepos">Repos</button>
   <button id="bHosts">Machines</button>

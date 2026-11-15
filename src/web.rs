@@ -93,8 +93,9 @@ fn state(a: &Ax) -> Value {
             wv[*x]["md"] = json!(a.md(x));
         }
     }
-    for x in a.db.all("select st, count(*) n, max(id) j from jobs where st in ('hunt','repro','fix','ci','design','test','review','gate','submit') group by st", pa![]) {
+    for x in a.db.all("select st, count(*) n, max(id) j from jobs where st in ('plan','hunt','repro','fix','ci','design','test','review','gate','submit') group by st", pa![]) {
         let w = match x["st"].as_str().unwrap_or("") {
+            "plan" => "architect",
             "hunt" => "hunter",
             "fix" => "fixer",
             "design" => "design_fixer",
@@ -912,7 +913,7 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
         ("GET", "/api/job") => {
             let id: i64 = qv("id").parse().unwrap_or(0);
             match a.db.one("select * from jobs where id=?", pa![id]) {
-                Some(j) => js(json!({"id": j["id"], "repo": j["repo"], "num": j["num"], "kind": j["kind"], "title": j["title"], "url": j["url"], "st": j["st"], "why": j["why"], "project_id": j["project_id"], "milestone_idx": j["milestone_idx"], "depends_on": j["depends_on"], "parent_branch": j["parent_branch"], "question_json": j["question_json"], "answers": j["d"]["answers"], "secret_envs": j["d"]["secret_envs"], "artifacts": j["d"]["artifacts"], "design": j["d"]["design"], "test_report": j["d"]["test_report"], "pt": j["d"]["pt"], "pb": j["d"]["pb"], "df": j["d"]["df"], "proof": j["d"]["proof"], "known": j["d"]["known"], "h": j["d"]["h"], "ext": j["d"]["ext"]["src"], "cost": a.db.one("select sum(case when sub=0 then usd end) usd, sum(case when sub=1 then usd end) val, sum(tin+tcw+tcr) ti, sum(tout) tou, count(*) n from cost where job=?", pa![id]), "ev": a.db.all("select t,w,m from ev where j=? order by id desc limit 80", pa![id])})),
+                Some(j) => js(json!({"id": j["id"], "repo": j["repo"], "num": j["num"], "kind": j["kind"], "title": j["title"], "url": j["url"], "st": j["st"], "why": j["why"], "project_id": j["project_id"], "milestone_idx": j["milestone_idx"], "depends_on": j["depends_on"], "parent_branch": j["parent_branch"], "question_json": j["question_json"], "answers": j["d"]["answers"], "secret_envs": j["d"]["secret_envs"], "artifacts": j["d"]["artifacts"], "milestone_artifact_jobs": j["d"]["milestone_artifact_jobs"], "milestone_summaries": j["d"]["milestone_summaries"], "design": j["d"]["design"], "test_report": j["d"]["test_report"], "pt": j["d"]["pt"], "pb": j["d"]["pb"], "df": j["d"]["df"], "proof": j["d"]["proof"], "known": j["d"]["known"], "h": j["d"]["h"], "ext": j["d"]["ext"]["src"], "cost": a.db.one("select sum(case when sub=0 then usd end) usd, sum(case when sub=1 then usd end) val, sum(tin+tcw+tcr) ti, sum(tout) tou, count(*) n from cost where job=?", pa![id]), "ev": a.db.all("select t,w,m from ev where j=? order by id desc limit 80", pa![id])})),
                 None => er(StatusCode::NOT_FOUND, "no such job"),
             }
         }
@@ -1000,7 +1001,7 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
                 }
                 "requeue" => {
                     if let Some(j) = a.db.jg(id) {
-                        if j.st == "drop" && ["fix", "build", "design_fix", "test_app"].contains(&j.kind.as_str()) {
+                        if j.st == "drop" && ["fix", "build", "design_fix", "test_app", "architect", "epic_pr"].contains(&j.kind.as_str()) {
                             let mut d = j.d.clone();
                             for k in ["h", "rs", "rp", "br", "f", "f0", "sq", "known", "vt", "paused_stage"] {
                                 d.as_object_mut().map(|o| o.remove(k));
@@ -1008,6 +1009,11 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
                             a.db.kd(&format!("kill:{id}"));
                             a.db.run("delete from kv where k=? or k like ?", pa![format!("cired:{}", j.repo), format!("cired:{}@%", j.repo)]);
                             a.db.jset(id, &[("st", json!(if j.why.starts_with("Guard") || j.why.starts_with("Vet") { "vet" } else { "ready" })), ("why", json!("requeued by the owner")), ("d", d), ("question_json", Value::Null)]);
+                            if let Some(pid) = j.project_id {
+                                if a.db.pg(pid).map(|p| p.st == "paused").unwrap_or(false) {
+                                    a.db.pset(pid, &[("st", json!("running"))]);
+                                }
+                            }
                         }
                     }
                 }

@@ -287,8 +287,8 @@ pub(crate) async fn prep(a: &Ax, j: &mut Job) -> R<()> {
         ok(a, j, &format!("git checkout -q -B {} refs/ao/head", q(&br)), 1800).await?;
         j.d["old"] = json!(ok(a, j, "git rev-parse HEAD", 60).await?);
     }
-    let su = rp(a, &j.repo)["setup"].as_str().unwrap_or("").trim().to_string();
-    if !su.is_empty() {
+    let su = setup_cmd(a, j);
+    if !su.is_empty() && !(j.kind == "build" && j.milestone_idx == 1) {
         a.say("repro", &format!("[{}] setup: {}", j.h(), crate::sh::head(&su, 80)), Some(j.id));
         let r = x(a, j, &format!("to 1800 bash -c {} 2>&1 | tail -c 3000; exit ${{PIPESTATUS[0]}}", q(&su)), 1900).await;
         if r.c != 0 {
@@ -296,12 +296,38 @@ pub(crate) async fn prep(a: &Ax, j: &mut Job) -> R<()> {
         }
         ok(a, j, "git checkout -q -- . 2>/dev/null; true", 60).await?;
     }
-    let bs = ok(a, j, "git rev-parse HEAD", 60).await?;
+    let bs = if j.kind == "epic_pr" {
+        ok(a, j, &format!("git rev-parse origin/{}", q(&mn)), 60).await?
+    } else {
+        ok(a, j, "git rev-parse HEAD", 60).await?
+    };
     j.d["br"] = json!(br);
     j.d["mn"] = json!(mn);
     j.d["base"] = json!(bs);
     a.db.jd(j);
     Ok(())
+}
+
+fn setup_cmd(a: &Ax, j: &Job) -> String {
+    let rsu = rp(a, &j.repo)["setup"].as_str().unwrap_or("").trim().to_string();
+    if !rsu.is_empty() {
+        rsu
+    } else if matches!(j.kind.as_str(), "build" | "epic_pr") {
+        j.s("arch_setup").trim().to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn ci_cmd(a: &Ax, j: &Job) -> String {
+    let rci = rp(a, &j.repo)["ci"].as_str().unwrap_or("").trim().to_string();
+    if !rci.is_empty() {
+        rci
+    } else if matches!(j.kind.as_str(), "build" | "epic_pr") {
+        j.s("arch_ci").trim().to_string()
+    } else {
+        String::new()
+    }
 }
 
 pub(crate) fn rn(a: &Ax, j: &Job) -> Option<Rn> {
@@ -537,7 +563,7 @@ fn unslot(a: &Ax, h: &str) {
 }
 
 async fn cirun(a: &Ax, j: &Job, at: Option<&str>) -> (i32, String) {
-    let c = rp(a, &j.repo)["ci"].as_str().unwrap_or("").to_string();
+    let c = ci_cmd(a, j);
     let id = j.id;
     let ax = a.clone();
     let secs = crate::mcp::job_secrets(a, Some(id));
@@ -589,7 +615,7 @@ async fn ci0(a: &Ax, j: &mut Job) -> R<String> {
     a.db.jset(j.id, &[("st", json!("ci"))]);
     a.st("ci", "work", Some(j.id), "");
     a.flow("fixer", "ci", &j.tag());
-    let c = rp(a, &j.repo)["ci"].as_str().unwrap_or("").trim().to_string();
+    let c = ci_cmd(a, j);
     if c.is_empty() {
         a.st("ci", "idle", None, "ok");
         a.say("ci", "skipped (no CI command configured yet)", Some(j.id));
@@ -641,6 +667,10 @@ async fn ci0(a: &Ax, j: &mut Job) -> R<String> {
                 a.st("ci", "idle", None, "sad");
                 return drop(format!("`{c}` needs a tool that is missing on {}: {}", j.h(), t.0));
             }
+        }
+        if matches!(j.kind.as_str(), "build" | "epic_pr") {
+            a.st("ci", "idle", None, "sad");
+            return Ok(format!("`{c}` fails (exit {ec}):\n{}", crate::sh::last(&errs(&o), 6000)));
         }
         let bk = format!("cibase:{}{}", j.repo, hk(a, &j.h()));
         let bs = j.s("base");
@@ -773,7 +803,7 @@ async fn review_mode(a: &Ax, j: &mut Job, f: &mut Value, diagnostic:bool) -> R<S
         j.repo,
         if j.own() { "no GitHub issue (the PR must not reference any issue number)".to_string() } else { format!("issue #{}", j.num) },
         wrap("issue", &format!("{}\n\n{}", j.title, crate::sh::head(&j.s("body"), 4000))),
-        if j.kind == "review" { format!("{}\n\n", wrap("request", &j.s("change"))) } else if j.feat() { "This PR implements a requested FEATURE, not a bug fix. Judge it as a feature: it does what the issue asks, completely but minimally; the tests check the new behaviour (on the test commit they may fail to compile because the new API is missing); no unrelated changes; no surprising changes to defaults, file formats or visible design beyond what the issue asks.\n\n".to_string() } else { String::new() },
+        if j.kind == "review" { format!("{}\n\n", wrap("request", &j.s("change"))) } else if j.kind == "build" { format!("This is BUILD MILESTONE M{} being merged onto `{}`. Commits implement planned milestone functionality and automated tests; CI and Tester E2E passed. Judge correctness, error handling, tests, security, and cleanliness; do NOT demand exactly two commits or an issue number.\n\n", j.milestone_idx, j.parent_branch) } else if matches!(j.kind.as_str(), "design_fix" | "test_app") { "This is a requested UI polish or E2E test suite change (there is no bug issue number). Check cleanliness, correctness, no unrelated changes, and no leftovers.\n\n".to_string() } else if j.feat() { "This PR implements a requested FEATURE, not a bug fix. Judge it as a feature: it does what the issue asks, completely but minimally; the tests check the new behaviour (on the test commit they may fail to compile because the new API is missing); no unrelated changes; no surprising changes to defaults, file formats or visible design beyond what the issue asks.\n\n".to_string() } else { String::new() },
         f["title"].as_str().unwrap_or(""),
         body(j, f, &ci, ""),
         if crate::quality::enabled(a) && j.kind == "fix" { format!("{}{}\nIndependent acceptance evidence: {}\nFrozen verifier (untrusted code): {}\nCheck that this verifier exercises actual production code and the reported behavior, rather than copying logic or merely matching source text. Reject inadequate coverage or unsupported claims.",rules(a, j),crate::quality::context(j),wrap("acceptance-evidence",&j.d["acceptance_proof"].to_string()),wrap("frozen-verifier",j.d["acceptance"]["script"].as_str().unwrap_or(""))) } else { rules(a, j) }
@@ -853,6 +883,26 @@ fn fixp(a: &Ax, j: &Job, fb: &str) -> String {
             rules(a, j)
         );
     }
+    if j.kind == "build" {
+        let ci = ci_cmd(a, j);
+        let su = setup_cmd(a, j);
+        let trailers = trs(j);
+        return format!(
+            "Repository: {}. Branch {} (parent epic branch: {}). Base commit: {}.\n{}{}\n{}\n\nRequirements:{}\n{}{}{}{}",
+            j.repo,
+            j.s("br"),
+            j.parent_branch,
+            j.s("base"),
+            if su.is_empty() { String::new() } else { format!("Setup command: `{su}`.\n") },
+            if ci.is_empty() { String::new() } else { format!("Full verification (CI) command: `{ci}`.\n") },
+            wrap("milestone", &j.s("body")),
+            if trailers.is_empty() { String::new() } else { format!(" Include git trailer(s): {}", trailers.join(", ")) },
+            rules(a, j),
+            answers_context(j),
+            if fb.is_empty() { String::new() } else { format!("\n\nPrevious verification/review feedback to resolve (branch keeps your existing commits):\n{fb}") },
+            "\nReply with strict JSON matching your instructions."
+        );
+    }
     let ci = rp(a, &j.repo)["ci"].as_str().unwrap_or("").to_string();
     let h = if ci.is_empty() { h } else { format!("{h} The repository's full test command is `{ci}`; your test_cmd runs in a fresh shell from the repo root, so use the same environment (for example the same virtualenv or package manager).") };
     let h = if j.feat() { format!("{h}\n{FEAT}") } else { h };
@@ -894,8 +944,43 @@ async fn vrev(a: &Ax, j: &Job, f: &Value) -> R<String> {
     Ok(String::new())
 }
 
+async fn verify_build(a: &Ax, j: &mut Job, f: &Value) -> R<String> {
+    let ts: Vec<String> = f["tests"].as_array().cloned().unwrap_or_default().iter().filter_map(|x| x.as_str().map(String::from)).filter(|x| !x.is_empty()).collect();
+    let tc = f["test_cmd"].as_str().unwrap_or("").trim().to_string();
+    if tc.is_empty() || ts.is_empty() {
+        return Ok("answer without test_cmd or tests".into());
+    }
+    if Regex::new(crate::mcp::BAD).unwrap().is_match(&tc) {
+        return Ok("test_cmd contains forbidden commands".into());
+    }
+    let n: i64 = ok(a, j, &format!("git rev-list --count {}..HEAD", j.s("base")), 60).await?.parse().unwrap_or(0);
+    if n < 1 {
+        return Ok("expected at least 1 commit on top of the parent branch, found 0".into());
+    }
+    if let Some(m) = dirty(a, j).await? {
+        return Ok(m);
+    }
+    let (be, bo) = run_t(a, j, "HEAD", &tc).await;
+    ok(a, j, &format!("git checkout -q {}", q(&j.s("br"))), 120).await?;
+    if be != 0 {
+        return Ok(format!("Build tests fail (exit {be}):\n{}", crate::sh::last(&bo, 3000)));
+    }
+    let f_list = fails(&bo);
+    if !f_list.is_empty() {
+        return Ok(format!("Tests reported failing: {}.\n{}", f_list.join(", "), crate::sh::last(&bo, 3000)));
+    }
+    let pl = Regex::new(r"(?i)\bok\b|pass|✓").unwrap();
+    let head_sha = ok(a, j, "git rev-parse HEAD", 60).await.unwrap_or_default();
+    j.d["proof"] = json!({"b_exit": be, "fix_commit": head_sha, "command": tc, "a": "", "b": bo.lines().filter(|x| pl.is_match(x)).take(6).collect::<Vec<_>>().join("\n")});
+    a.db.jd(j);
+    Ok(String::new())
+}
+
 async fn fix(a: &Ax, j: &mut Job, fb0: String, k0: u64) -> R<Value> {
-    crate::quality::prepare(a,j).await?;
+    let is_build = j.kind == "build";
+    if !is_build {
+        crate::quality::prepare(a, j).await?;
+    }
     let mut fb = fb0;
     let plan = crate::routing::plan(a);
     let rounds = if crate::routing::enabled(a) { plan.len() as u64 } else { RND + 1 };
@@ -903,13 +988,14 @@ async fn fix(a: &Ax, j: &mut Job, fb0: String, k0: u64) -> R<Value> {
         kill(a, j)?;
         a.db.jset(j.id, &[("st", json!("fix"))]);
         a.st("fixer", "work", Some(j.id), "");
-        a.say("fixer", &format!("{}fixing {}", if k > 0 { format!("round {}: ", k + 1) } else { String::new() }, j.tag()), Some(j.id));
+        a.say("fixer", &format!("{}{} {}", if k > 0 { format!("round {}: ", k + 1) } else { String::new() }, if is_build { "building" } else { "fixing" }, j.tag()), Some(j.id));
         let c = cx(a, j);
         let md = if crate::routing::enabled(a) { plan[k as usize].clone() } else if c { a.md("big") } else { a.md("fixer") };
         crate::routing::event(a, Some(j.id), "fixer", k as usize, &md, &fb);
         use_(a, j, &md);
         j.d["author"] = json!(md);
-        let mut o = Ask::new("fixer", md, P("fixer"), fixp(a, j, &fb));
+        let sys_p = if is_build { P("builder") } else { P("fixer") };
+        let mut o = Ask::new("fixer", md, sys_p, fixp(a, j, &fb));
         o.job = Some(j.id);
         o.rn = rn(a, j);
         o.turns = if c { 200 } else { 120 };
@@ -930,14 +1016,20 @@ async fn fix(a: &Ax, j: &mut Job, fb0: String, k0: u64) -> R<Value> {
         if let Some(g) = js["give_up"].as_str() {
             a.st("fixer", "idle", None, "sad");
             if crate::routing::enabled(a) { fb = format!("Previous model gave up: {g}. Inspect the tree and repair the actual issue."); continue; }
-            return drop(format!("Fixer gave up: {g}"));
+            return drop(format!("{} gave up: {g}", if is_build { "Builder" } else { "Fixer" }));
         }
         a.say("fixer", &format!("done: {}", js["title"].as_str().unwrap_or("")), Some(j.id));
         j.d["f0"] = js.clone();
         j.d["k"] = json!(k);
         a.db.jd(j);
         a.flow("fixer", "ci", "proof");
-        fb = if j.kind == "review" { vrev(a, j, &js).await? } else { verify(a, j, &js).await? };
+        fb = if j.kind == "review" {
+            vrev(a, j, &js).await?
+        } else if is_build {
+            verify_build(a, j, &js).await?
+        } else {
+            verify(a, j, &js).await?
+        };
         if !fb.is_empty() {
             a.say("fixer", &format!("proof missing: {}", fb.lines().next().unwrap_or("")), Some(j.id));
             if crate::routing::enabled(a) {
@@ -960,7 +1052,29 @@ async fn fix(a: &Ax, j: &mut Job, fb0: String, k0: u64) -> R<Value> {
             }
             continue;
         }
-        j.d["verification_feedback"] = json!("Executed regression proof and repository CI passed.");
+        if is_build {
+            let need_visual = j.d["visual"].as_bool().unwrap_or(false) || has_ui_surface(a, j).await;
+            if need_visual {
+                let dfb = design_fix_stage(a, j, false).await?;
+                if !dfb.is_empty() {
+                    fb = dfb;
+                    continue;
+                }
+                let ci_after = ci(a, j).await?;
+                if !ci_after.is_empty() {
+                    fb = format!("CI failed after Design Fixer edits:\n{ci_after}");
+                    continue;
+                }
+            }
+            let tr = tester_stage(a, j, false).await?;
+            if tr["ok"] == false {
+                let bugs = tr["bugs_found"].to_string();
+                let sum = tr["summary"].as_str().unwrap_or("E2E checks failed");
+                fb = format!("Tester failed: {sum}\nBugs found: {bugs}");
+                continue;
+            }
+        }
+        j.d["verification_feedback"] = json!("Executed verification and repository CI passed.");
         let mut f = js.clone();
         fb = review(a, j, &mut f).await?;
         if !fb.is_empty() {
@@ -972,7 +1086,7 @@ async fn fix(a: &Ax, j: &mut Job, fb0: String, k0: u64) -> R<Value> {
         return Ok(f);
     }
     a.st("fixer", "idle", None, "sad");
-    drop(format!("no valid fix after {} rounds: {}", rounds, fb.lines().next().unwrap_or("")))
+    drop(format!("no valid {} after {} rounds: {}", if is_build { "milestone build" } else { "fix" }, rounds, fb.lines().next().unwrap_or("")))
 }
 
 async fn reb(a: &Ax, j: &mut Job) -> R<()> {
@@ -1159,9 +1273,44 @@ async fn tmpl(r: &str) -> Option<String> {
 
 async fn mkbody(a: &Ax, j: &mut Job) -> R<()> {
     let f = j.d["f"].clone();
-    let ci = rp(a, &j.repo)["ci"].as_str().unwrap_or("").to_string();
+    let ci = ci_cmd(a, j);
     let ft = fo(a, j);
-    let mut b = body(j, &f, &ci, ft);
+    let mut b = if j.kind == "epic_pr" {
+        let sum = j.s("arch_summary");
+        let stack = j.s("arch_stack");
+        let ms_lines: Vec<String> = j.d["milestone_summaries"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        let art_count = j.d["milestone_artifacts"].as_array().map(|v| v.len()).unwrap_or(0);
+        let mut out = vec![
+            "## Summary".to_string(),
+            if sum.is_empty() { f["fix"].as_str().unwrap_or(&j.title).to_string() } else { sum },
+        ];
+        if !stack.is_empty() {
+            out.push(format!("\n**Tech stack:** {stack}"));
+        }
+        if !ms_lines.is_empty() {
+            out.push("\n## Milestones Included".into());
+            out.extend(ms_lines);
+        }
+        out.push("\n## Verified".into());
+        if !ci.is_empty() {
+            out.push(format!("- `{ci}` passes across all integrated milestones."));
+        }
+        if art_count > 0 {
+            out.push(format!("- Visual & E2E checks captured {art_count} screenshot artifact(s)."));
+        }
+        if !ft.is_empty() {
+            out.push(format!("\n{ft}"));
+        }
+        out.join("\n").trim().to_string()
+    } else {
+        body(j, &f, &ci, ft)
+    };
     if j.kind == "fix" {
         if let Some(t) = tmpl(&j.repo).await {
             a.say("submit", "repo has a PR template, filling it in", Some(j.id));
@@ -1545,9 +1694,11 @@ pub(crate) async fn design_fix_stage(a: &Ax, j: &mut Job, standalone: bool) -> R
     };
     let _ = x(a, j, "pkill -f \"127\\.0\\.0\\.1:\" 2>/dev/null; true", 30).await;
     sync_artifacts(a, j).await;
-    let dt = ok(a, j, "git status --porcelain", 60).await.unwrap_or_default();
+        let dt = ok(a, j, "git status --porcelain", 60).await.unwrap_or_default();
     if !dt.trim().is_empty() {
-        let _ = x(a, j, &format!("git add -A && git commit -qm {}", q("design: polish UI/UX layout")), 60).await;
+        let tr = trs(j);
+        let msg = if tr.is_empty() { "design: polish UI/UX layout".to_string() } else { format!("design: polish UI/UX layout\n\n{}", tr.join("\n")) };
+        let _ = x(a, j, &format!("git add -A && git commit -qm {}", q(&msg)), 60).await;
     }
     j.d["design"] = js.clone();
     a.db.jd(j);
@@ -1613,7 +1764,9 @@ pub(crate) async fn tester_stage(a: &Ax, j: &mut Job, standalone: bool) -> R<Val
     } else {
         let dt = ok(a, j, "git status --porcelain", 60).await.unwrap_or_default();
         if !dt.trim().is_empty() {
-            let _ = x(a, j, &format!("git add -A && git commit -qm {}", q("test: add E2E verification tests")), 60).await;
+            let tr = trs(j);
+            let msg = if tr.is_empty() { "test: add E2E verification tests".to_string() } else { format!("test: add E2E verification tests\n\n{}", tr.join("\n")) };
+            let _ = x(a, j, &format!("git add -A && git commit -qm {}", q(&msg)), 60).await;
         }
     }
     j.d["test_report"] = js.clone();
@@ -1631,6 +1784,148 @@ fn idle_all(a: &Ax, id: i64) {
             a.st(w, "idle", None, "");
         }
     }
+}
+
+fn parse_deps(v: &Value) -> Vec<i64> {
+    match v {
+        Value::Array(arr) => arr.iter().filter_map(|x| x.as_i64()).collect(),
+        Value::String(s) => serde_json::from_str::<Vec<i64>>(s).unwrap_or_default(),
+        _ => vec![],
+    }
+}
+
+fn prepare_epic_pr(j: &mut Job) {
+    if j.d["f"].is_object() {
+        return;
+    }
+    let title = j.d["title"].as_str().unwrap_or(&j.title).to_string();
+    let sum = j.s("arch_summary");
+    let ms_lines: Vec<String> = j.d["milestone_summaries"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+    j.d["f"] = json!({
+        "title": title,
+        "cause": if sum.is_empty() { "Full application implementation on epic branch." } else { &sum },
+        "fix": if ms_lines.is_empty() { sum.clone() } else { ms_lines.join("\n") },
+        "untouched": "Main branch until approved and merged",
+        "tests": ["Consolidated milestone tests & E2E checks"],
+        "test_cmd": j.s("arch_ci"),
+    });
+}
+
+async fn land_milestone(a: &Ax, j: &mut Job) -> R<()> {
+    let epic_br = j.parent_branch.clone();
+    let br = j.s("br");
+    if epic_br.is_empty() || br.is_empty() {
+        return Err(X::E("build milestone missing epic_branch or branch".into()));
+    }
+    let url = format!("{}{}.git", gitb(), j.repo);
+    pull(a, j, &url, &epic_br, &format!("refs/remotes/origin/{epic_br}")).await?;
+
+    let tr = trs(j);
+    let head_msg = ok(a, j, "git log -1 --format=%B", 60).await.unwrap_or_default();
+    let missing_tr: Vec<&String> = tr.iter().filter(|t| !head_msg.contains(t.as_str())).collect();
+    if !missing_tr.is_empty() {
+        let args = missing_tr.iter().map(|t| format!("--trailer {}", q(t))).collect::<Vec<_>>().join(" ");
+        ok(a, j, &format!("git commit -q --amend --no-edit {args}"), 60).await?;
+    }
+
+    let base_epic = ok(a, j, &format!("git rev-parse origin/{}", q(&epic_br)), 60).await?;
+    let is_anc = x(a, j, &format!("git merge-base --is-ancestor {} HEAD", q(&base_epic)), 60).await.c == 0;
+    if !is_anc {
+        a.say("fixer", &format!("epic branch {epic_br} moved; rebasing M{}", j.milestone_idx), Some(j.id));
+        let rb = x(a, j, &format!("git rebase -q origin/{}", q(&epic_br)), 600).await;
+        if rb.c != 0 {
+            let _ = x(a, j, "git rebase --abort", 60).await;
+            return drop(format!("merge conflict landing M{} onto {epic_br}; requeue to rebuild cleanly", j.milestone_idx));
+        }
+        let ci_res = ci(a, j).await?;
+        if !ci_res.is_empty() {
+            return drop(format!("CI failed after rebasing M{} onto {epic_br}: {}", j.milestone_idx, crate::sh::head(&ci_res, 220)));
+        }
+    }
+
+    ok(a, j, &format!("git checkout -q -B {} origin/{} && git merge -q --ff-only {}", q(&epic_br), q(&epic_br), q(&br)), 120).await?;
+    push_branch(a, j, &epic_br, &base_epic, &j.repo, "").await?;
+
+    if j.milestone_idx == 1 {
+        let rrow = rp(a, &j.repo);
+        if rrow["ci"].as_str().unwrap_or("").trim().is_empty() && !j.s("arch_ci").is_empty() {
+            a.db.run("update rp set ci=? where full=? and trim(ci)=''", pa![j.s("arch_ci"), j.repo.clone()]);
+        }
+        if rrow["setup"].as_str().unwrap_or("").trim().is_empty() && !j.s("arch_setup").is_empty() {
+            a.db.run("update rp set setup=? where full=? and trim(setup)=''", pa![j.s("arch_setup"), j.repo.clone()]);
+        }
+    }
+
+    a.db.jset(j.id, &[("st", json!("done")), ("why", json!(format!("landed on {epic_br}")))]);
+    a.say("submit", &format!("milestone M{} landed on {epic_br}", j.milestone_idx), Some(j.id));
+
+    if let Some(pid) = j.project_id {
+        let ms = a.db.p_milestones(pid);
+        let remaining_builds = ms.iter().any(|m| m.kind == "build" && !matches!(m.st.as_str(), "done" | "drop"));
+        let any_failed = ms.iter().any(|m| m.kind == "build" && m.st == "drop");
+        if let Some(proj) = a.db.pg(pid) {
+            if !remaining_builds && !any_failed {
+                let has_epic = ms.iter().any(|m| m.kind == "epic_pr" && m.st != "drop");
+                if !has_epic {
+                    let dep_ids: Vec<i64> = ms.iter().filter(|m| m.kind == "build").map(|m| m.id).collect();
+                    let max_idx = ms.iter().filter(|m| m.kind == "build").map(|m| m.milestone_idx).max().unwrap_or(0) + 1;
+                    let mut all_ms: BTreeSet<String> = BTreeSet::new();
+                    let mut all_arts: Vec<String> = vec![];
+                    let mut art_jobs: Vec<Value> = vec![];
+                    let mut summaries: Vec<String> = vec![];
+                    for m in ms.iter().filter(|m| m.kind == "build" && m.st == "done") {
+                        if let Some(arr) = m.d["ms"].as_array() {
+                            for s in arr.iter().filter_map(|v| v.as_str()) {
+                                all_ms.insert(s.to_string());
+                            }
+                        }
+                        if let Some(arr) = m.d["artifacts"].as_array() {
+                            let files: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+                            for f in &files {
+                                all_arts.push(format!("M{}#{}: {f}", m.milestone_idx, m.id));
+                            }
+                            if !files.is_empty() {
+                                art_jobs.push(json!({"job_id": m.id, "milestone": m.milestone_idx, "files": files}));
+                            }
+                        }
+                        let ttl = m.d["f"]["title"].as_str().unwrap_or(&m.title);
+                        let fix_s = m.d["f"]["fix"].as_str().unwrap_or("");
+                        summaries.push(format!("- **M{} ({})**: {}", m.milestone_idx, ttl, crate::sh::head(fix_s, 180)));
+                    }
+                    let ed = json!({
+                        "desk": 1,
+                        "ext": {"src": "architect"},
+                        "title": format!("feat: {}", proj.title),
+                        "arch_summary": proj.arch_json["summary"],
+                        "arch_stack": proj.arch_json["stack"],
+                        "arch_setup": proj.arch_json["setup_cmd"],
+                        "arch_ci": proj.arch_json["ci_cmd"],
+                        "milestone_summaries": summaries,
+                        "milestone_artifacts": all_arts,
+                        "milestone_artifact_jobs": art_jobs,
+                        "ms": all_ms.into_iter().collect::<Vec<_>>(),
+                        "project_id": pid,
+                    });
+                    a.db.jnew_proj(&j.repo, 0, "epic_pr", &format!("PR: {}", proj.title), &j.url, "ready", &format!("open PR for {epic_br}"), ed, None, -1.5, Some(pid), max_idx, &dep_ids, &epic_br);
+                    a.sw.notify_one();
+                }
+                if proj.st != "done" {
+                    a.db.pset(pid, &[("st", json!("running"))]);
+                }
+            } else if remaining_builds && proj.pause_each && proj.st == "running" {
+                a.db.pset(pid, &[("st", json!("waiting_milestone"))]);
+                a.say("fixer", &format!("milestone M{} landed on {epic_br}; project #{pid} paused for your confirmation before next milestone", j.milestone_idx), Some(j.id));
+                a.note("Milestone completed", &format!("M{} ({}) landed on {epic_br}. Continue in Projects when ready.", j.milestone_idx, j.title), 2);
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn go(a: &Ax, id: i64, h: &str) {
@@ -1670,6 +1965,11 @@ async fn go(a: &Ax, id: i64, h: &str) {
             j = jj;
             kill(a, &j)?;
         } else {
+            if j.kind == "architect" {
+                crate::arch::run(a, &mut j).await?;
+                clean(a, &j).await;
+                return Err(X::Back(String::new()));
+            }
             let mut jj = j.clone();
             stage(a, "repro", || {
                 let mut k = jj.clone();
@@ -1681,7 +1981,9 @@ async fn go(a: &Ax, id: i64, h: &str) {
             .await
             .map(|x| jj = x)?;
             j = jj;
-            crate::quality::inspect(a,&mut j).await?;
+            if j.kind == "fix" {
+                crate::quality::inspect(a, &mut j).await?;
+            }
             kill(a, &j)?;
             if j.kind == "hunt" {
                 let mut jj = j.clone();
@@ -1695,12 +1997,14 @@ async fn go(a: &Ax, id: i64, h: &str) {
                 clean(a, &jj).await;
                 return Err(X::Back(String::new()));
             }
-            for k in [format!("cired:{}", j.repo), format!("cired:{}{}", j.repo, hk(a, &j.h()))] {
-                if let Some(cr) = a.db.kg(&k).as_object() {
-                    if cr.get("sha").and_then(|x| x.as_str()) == Some(j.s("base").as_str()) {
-                        return Err(X::Back(format!("{}: CI is red on the default branch, waiting until it moves", j.repo)));
+            if !matches!(j.kind.as_str(), "build" | "epic_pr" | "design_fix" | "test_app") {
+                for k in [format!("cired:{}", j.repo), format!("cired:{}{}", j.repo, hk(a, &j.h()))] {
+                    if let Some(cr) = a.db.kg(&k).as_object() {
+                        if cr.get("sha").and_then(|x| x.as_str()) == Some(j.s("base").as_str()) {
+                            return Err(X::Back(format!("{}: CI is red on the default branch, waiting until it moves", j.repo)));
+                        }
+                        a.db.kd(&k);
                     }
-                    a.db.kd(&k);
                 }
             }
             if j.kind == "fix" && j.d["paused_stage"].as_str() != Some("fix") {
@@ -1802,6 +2106,9 @@ async fn go(a: &Ax, id: i64, h: &str) {
                     clean(a, &k).await;
                     return Err(X::Back(String::new()));
                 }
+            } else if j.kind == "epic_pr" {
+                prepare_epic_pr(&mut jj);
+                a.db.jd(&jj);
             } else {
                 stage(a, "fixer", || {
                     let mut k = jj.clone();
@@ -1813,6 +2120,11 @@ async fn go(a: &Ax, id: i64, h: &str) {
                 })
                 .await
                 .map(|x| jj = x)?;
+                if jj.kind == "build" {
+                    land_milestone(a, &mut jj).await?;
+                    clean(a, &jj).await;
+                    return Err(X::Back(String::new()));
+                }
             }
             j = jj;
             kill(a, &j)?;
@@ -1831,7 +2143,7 @@ async fn go(a: &Ax, id: i64, h: &str) {
             mkbody(a, &mut j).await?;
             j.d["pbase"] = json!(j.s("base"));
             a.db.jd(&j);
-            let auto = !crate::routing::enabled(a) && (rp(a, &j.repo)["mode"].as_str() == Some("auto") || j.kind != "fix");
+            let auto = !crate::routing::enabled(a) && (rp(a, &j.repo)["mode"].as_str() == Some("auto") || matches!(j.kind.as_str(), "rebase" | "review"));
             if !auto && !j.d["ap"].as_bool().unwrap_or(false) {
                 a.db.jset(id, &[("st", json!("approve")), ("why", json!("waiting for your approval"))]);
                 a.st("submit", "idle", None, "ok");
@@ -1856,6 +2168,11 @@ async fn go(a: &Ax, id: i64, h: &str) {
         })?;
         j = jj;
         a.db.jset(id, &[("st", json!("done")), ("pr", if n > 0 { json!(n) } else { Value::Null }), ("why", json!(if u.is_empty() { "DRY".to_string() } else { u }))]);
+        if j.kind == "epic_pr" {
+            if let Some(pid) = j.project_id {
+                a.db.pset(pid, &[("st", json!("done"))]);
+            }
+        }
         a.st("submit", "idle", None, "ok");
         clean(a, &j).await;
         Ok(())
@@ -1913,6 +2230,11 @@ async fn go(a: &Ax, id: i64, h: &str) {
             };
             let jj = a.db.jg(id).unwrap_or(j.clone());
             a.db.jset(id, &[("st", json!("drop")), ("why", json!(m.clone()))]);
+            if let Some(pid) = jj.project_id {
+                if a.db.pg(pid).map(|p| !matches!(p.st.as_str(), "done" | "drop")).unwrap_or(false) {
+                    a.db.pset(pid, &[("st", json!("paused"))]);
+                }
+            }
             idle_all(a, id);
             a.say("submit", &format!("{} dropped: {m}", jj.tag()), Some(id));
             if Regex::new(r"faster|conflict|error|rounds|gave up|CI").unwrap().is_match(&m) && jj.kind != "hunt" {
@@ -1924,7 +2246,7 @@ async fn go(a: &Ax, id: i64, h: &str) {
 }
 
 pub fn recover(a: &Ax) {
-    for j in a.db.all("select id, st, kind, d from jobs where st in ('repro','fix','ci','design','test','review','gate','hunt','submit')", pa![]) {
+    for j in a.db.all("select id, st, kind, d from jobs where st in ('plan','repro','fix','ci','design','test','review','gate','hunt','submit')", pa![]) {
         let id = j["id"].as_i64().unwrap_or(0);
         let mut d = j["d"].clone();
         let st = j["st"].as_str().unwrap_or("");
@@ -1932,9 +2254,9 @@ pub fn recover(a: &Ax) {
         if st == "submit" && d["ap"].as_bool().unwrap_or(false) {
             continue;
         }
-        if kd == "fix" && ["ci", "review", "gate", "submit"].contains(&st) && d["h"].is_string() && d["br"].is_string() {
+        if matches!(kd, "fix" | "epic_pr") && ["ci", "review", "gate", "submit"].contains(&st) && d["h"].is_string() && d["br"].is_string() {
             d["rs"] = json!(true);
-        } else if (kd == "fix" || kd == "hunt") && d["h"].is_string() {
+        } else if matches!(kd, "fix" | "hunt" | "build" | "design_fix" | "test_app" | "architect") && d["h"].is_string() {
             d["rp"] = json!(true);
         }
         a.db.jset(id, &[("st", json!("ready")), ("d", d), ("prio", json!(-2))]);
@@ -1983,6 +2305,9 @@ async fn pick(a: &Ax, h: &str) -> Option<i64> {
             if j["st"] == "submit" { 0 } else { 1 },
             if d["rs"].as_bool().unwrap_or(false) || d["rp"].as_bool().unwrap_or(false) { 0 } else { 1 },
             match j["kind"].as_str().unwrap_or("fix") {
+                "architect" => 0.2,
+                "epic_pr" => 0.3,
+                "build" => 0.5 + (j["milestone_idx"].as_f64().unwrap_or(0.0) / 1000.0),
                 "hunt" => 1.0,
                 "fix" => 2.0 + j["prio"].as_f64().unwrap_or(0.0) / 1000.0,
                 _ => 0.0,
@@ -1998,6 +2323,45 @@ async fn pick(a: &Ax, h: &str) -> Option<i64> {
         let pin = j["st"] == "submit" || d["rs"].as_bool().unwrap_or(false) || d["rp"].as_bool().unwrap_or(false);
         if a.act.lock().unwrap().contains(&format!("{r} {h}")) || a.lk.lock().unwrap().contains(&id) {
             continue;
+        }
+        let deps = parse_deps(&j["depends_on"]);
+        if !deps.is_empty() && j["st"] != "submit" {
+            let mut blocked = false;
+            let mut dropped_dep = None;
+            for dep_id in deps {
+                let dst = a.db.one("select st from jobs where id=?", pa![dep_id]).and_then(|x| x["st"].as_str().map(String::from));
+                match dst.as_deref() {
+                    Some("done") => {}
+                    Some("drop") | None => { dropped_dep = Some(dep_id); break; }
+                    _ => { blocked = true; }
+                }
+            }
+            if let Some(did) = dropped_dep {
+                a.db.jset(id, &[("st", json!("drop")), ("why", json!(format!("prerequisite milestone job #{did} dropped")))]);
+                continue;
+            }
+            if blocked {
+                continue;
+            }
+        }
+        if let Some(pid) = j["project_id"].as_i64().filter(|p| *p > 0) {
+            if let Some(proj) = a.db.pg(pid) {
+                let st_now = j["st"].as_str().unwrap_or("");
+                if proj.st == "drop" {
+                    if !matches!(st_now, "done" | "drop") {
+                        a.db.jset(id, &[("st", json!("drop")), ("why", json!("project dropped by owner"))]);
+                    }
+                    continue;
+                }
+                if st_now != "submit" && matches!(proj.st.as_str(), "paused" | "waiting_milestone" | "budget_reached" | "need_user") {
+                    continue;
+                }
+                if st_now != "submit" && proj.budget_usd > 0.0 && proj.spent_usd >= proj.budget_usd {
+                    a.db.pset(pid, &[("st", json!("budget_reached"))]);
+                    a.say("fixer", &format!("project #{pid} paused: budget cap ${:.2} reached (spent ${:.2})", proj.budget_usd, proj.spent_usd), Some(id));
+                    continue;
+                }
+            }
         }
         if j["kind"] == "hunt" && a.hold("hunter") {
             continue;
@@ -2020,10 +2384,10 @@ async fn pick(a: &Ax, h: &str) -> Option<i64> {
             continue;
         }
         let kind_s = j["kind"].as_str().unwrap_or("");
-        if rr["ci"].as_str().unwrap_or("").trim().is_empty() && !pin && !matches!(kind_s, "design_fix" | "test_app" | "architect") {
+        if rr["ci"].as_str().unwrap_or("").trim().is_empty() && !pin && !matches!(kind_s, "design_fix" | "test_app" | "architect" | "build" | "epic_pr") {
             continue;
         }
-        if !pin && red(a, &r, h).await {
+        if !pin && !matches!(kind_s, "build" | "epic_pr" | "design_fix" | "test_app") && red(a, &r, h).await {
             continue;
         }
         if !pin && j["kind"] == "fix" {
