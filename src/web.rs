@@ -727,6 +727,10 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
             Ok(v) => js(v),
             Err(e) => er(StatusCode::BAD_REQUEST, &e),
         },
+        ("POST", "/api/chat/go") => match crate::desk::go(a, &b) {
+            Ok(v) => js(v),
+            Err(e) => er(StatusCode::BAD_REQUEST, &e),
+        },
         ("POST", "/api/repo") => {
             let op = b["op"].as_str().unwrap_or("");
             let Some(r) = rid(b["full"].as_str().unwrap_or("")) else { return er(StatusCode::BAD_REQUEST, "use owner/name") };

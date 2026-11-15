@@ -191,22 +191,36 @@ async fn front_desk_chat_routes_requests_to_workers() {
         msgs.push(json!({"r": "you", "t": t}));
         json!({"msgs": msgs})
     };
+    // A chat turn only proposes a plan; nothing starts before /api/chat/go.
+    let mut acts = vec![];
     let r = post("/api/chat", say("Calling add 2 3 prints -1 instead of 5")).await;
     assert_eq!(r["reply"], "Repro will reproduce the bug.", "{r}");
-    assert_eq!((r["jobs"][0]["to"].as_str(), r["jobs"][0]["new"].as_bool()), (Some("repro"), Some(true)), "{r}");
+    assert_eq!((r["plan"][0]["to"].as_str(), r["jobs"].as_array().map(|x| x.len())), (Some("repro"), Some(0)), "{r}");
+    acts.push(r["plan"][0]["act"].clone());
     let r = post("/api/chat", say("Add a mul function")).await;
-    assert_eq!((r["jobs"][0]["to"].as_str(), r["jobs"][0]["kind"].as_str()), (Some("repro"), Some("feature")), "{r}");
+    assert_eq!((r["plan"][0]["to"].as_str(), r["plan"][0]["kind"].as_str()), (Some("repro"), Some("feature")), "{r}");
+    acts.push(r["plan"][0]["act"].clone());
     let r = post("/api/chat", say("Please fix issue #1")).await;
-    assert_eq!(r["jobs"][0]["to"], "vet", "{r}");
+    assert_eq!(r["plan"][0]["to"], "vet", "{r}");
+    acts.push(r["plan"][0]["act"].clone());
     let r = post("/api/chat", say("Go hunt for bugs")).await;
-    assert_eq!(r["jobs"][0]["to"], "hunter", "{r}");
+    assert_eq!(r["plan"][0]["to"], "hunter", "{r}");
+    acts.push(r["plan"][0]["act"].clone());
     let r = post("/api/chat", say("What about the other one?")).await;
-    assert_eq!((r["reply"].as_str(), r["jobs"].as_array().map(|x| x.len())), (Some("Which repository do you mean?"), Some(0)), "{r}");
+    assert_eq!((r["reply"].as_str(), r["plan"].as_array().map(|x| x.len())), (Some("Which repository do you mean?"), Some(0)), "{r}");
     let r = post("/api/chat", say("fix the crash elsewhere")).await;
-    assert_eq!(r["jobs"].as_array().unwrap().len(), 0, "{r}");
+    assert_eq!(r["plan"].as_array().unwrap().len(), 0, "{r}");
     assert!(r["errs"][0].as_str().unwrap().contains("o/elsewhere is not added"), "{r}");
     let r = post("/api/chat", json!({"msgs": [{"r": "desk", "t": "hello"}]})).await;
     assert_eq!(r["error"], "write a message first", "{r}");
+
+    let q = || async { c.get(format!("{o}/api/state")).header("cookie", &ck).send().await.unwrap().json::<Value>().await.unwrap()["q"].as_array().unwrap().len() };
+    assert_eq!(q().await, 0, "the chat started work before the owner pressed Start");
+    let keep: Vec<Value> = acts.iter().map(|a| json!({"act": a})).collect();
+    let g = post("/api/chat/go", json!({"acts": keep})).await;
+    assert_eq!(g["jobs"].as_array().unwrap().iter().filter(|j| j["new"] == true).count(), 4, "{g}");
+    let g = post("/api/chat/go", json!({"acts": keep})).await;
+    assert!(g["jobs"].as_array().unwrap().iter().all(|j| j["new"] == false), "{g}");
 
     let s = c.get(format!("{o}/api/state")).header("cookie", &ck).send().await.unwrap().json::<Value>().await.unwrap();
     let st: Vec<(String, String)> = s["q"].as_array().unwrap().iter().map(|j| (j["kind"].as_str().unwrap().to_string(), j["st"].as_str().unwrap().to_string())).collect();
