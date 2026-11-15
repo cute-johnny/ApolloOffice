@@ -94,6 +94,22 @@ apollo-office status
 
 Options: `--port` (default 47300), `--data <folder>`.
 
+## Ask the office
+
+Click **Ask the office** in the header and say what you need in your own
+words. The front desk, a small AI model, works out what you mean and hands the
+work to the right worker; after that the office carries on by itself.
+
+| You say | Goes to |
+|---|---|
+| "Fix issue #12" | Vet, who reads the issue first |
+| "The export command crashes on an empty file" | Repro, who reproduces the bug |
+| "Add a --json flag to the list command" | Repro, who plans the feature |
+| "Search this repo for bugs" | Hunter |
+
+If something is unclear, for example which repository you mean, the front desk
+asks before it starts anything. Hover any worker to read what it does.
+
 ## Report failed CI runs
 
 Add a workflow that sends failed runs of your CI on the default branch to the
