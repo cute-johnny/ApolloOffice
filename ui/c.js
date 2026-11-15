@@ -23,6 +23,7 @@
     log.innerHTML = (msgs.length ? msgs.map(bubble).join("") : intro()) + (busy ? `<div class="cm desk wait">The front desk is thinking…</div>` : "");
     log.scrollTop = log.scrollHeight;
     send.disabled = busy;
+    A.deskBusy = busy;
   };
 
   // What the model gets back as its own earlier turns: its reply plus the
@@ -41,6 +42,7 @@
   };
 
   const toggle = (on) => { el.hidden = !on; $("bAsk").classList.toggle("on", on); if (on) { draw(); inp.focus(); } };
+  A.chat = toggle;
   $("bAsk").onclick = () => toggle(el.hidden);
   $("chX").onclick = () => toggle(false);
   $("chN").onclick = () => { if (busy) return; msgs = []; save(); draw(); inp.focus(); };

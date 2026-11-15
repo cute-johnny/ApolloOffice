@@ -27,6 +27,7 @@
     reviewer: { body: "#d0649f", dark: "#a3437a", light: "#e597c2" },
     submit: { body: "#5cbf6a", dark: "#3d9149", light: "#94dd9e" },
     watcher: { body: "#4fb3e0", dark: "#2f86b0", light: "#8fd2f0" },
+    desk: { body: "#34363d", dark: "#15161a", light: "#7a7f8a" },
   };
   const NM = { hunter: "Hunter", scout: "Scout", guard: "Guard", vet: "Vet", repro: "Repro", fixer: "Fixer", ci: "CI", reviewer: "Reviewer", submit: "Submit", watcher: "Watcher", desk: "Front desk" };
   window.AO.NM = NM;
@@ -41,12 +42,16 @@
     ci: "Runs the project's tests and proves the new test fails without the fix and passes with it. Uses no AI model.",
     reviewer: "Reviews the finished diff like a strict maintainer and sends it back to Fixer if something is wrong.",
     submit: "Holds the finished work for your approval, then pushes the branch and opens the pull request. Uses no AI model.",
+    desk: "The boss at the front desk. Talk to him in the chat: he turns what you ask for into jobs and hands them to the right workers.",
   };
+  const DWARN = "Careful: he manages the whole office. One message can start work for Vet, Repro, Fixer and Hunter at once and spend their models' budget, so name the repository and say exactly what you want.";
+  window.AO.DWARN = DWARN;
   window.AO.DESC = DESC;
   const ORD = ["scout", "guard", "vet", "watcher", "hunter", "repro", "fixer", "ci", "reviewer", "submit"];
 
-  const VW = 400, VH = 258;
-  const AN = { scout: [34, 74], guard: [74, 74], vet: [150, 74], watcher: [226, 74], repro: [53, 164], fixer: [147, 164], ci: [327, 100], reviewer: [241, 164], submit: [343, 164] };
+  // The floor is 400 wide; the 84 pixels on the right are the front desk wing.
+  const VW = 484, VH = 258;
+  const AN = { scout: [34, 74], guard: [74, 74], vet: [150, 74], watcher: [226, 74], repro: [53, 164], fixer: [147, 164], ci: [327, 100], reviewer: [241, 164], submit: [343, 164], desk: [442, 172] };
   const TEAM = [["hunter", "hunt", 0], ["repro", "repro", 8], ["fixer", "fix", 102], ["reviewer", "review", 196], ["submit", "submit", 290]];
   const FITC = ["#e8e6df", "#1b1a18", "#4fb3e0", "#e0675a", "#5cbf6a", "#9c7ae0", "#d0649f", "#8d9199"];
 
@@ -206,6 +211,7 @@
     vet: (r) => { const y = r.eyeY - 1; for (const x of [r.cx - 5, r.cx + 2]) { K.px(fc, x, y, "#e8e6df", 4, 1); K.px(fc, x, y + 3, "#e8e6df", 4, 1); K.px(fc, x, y, "#e8e6df", 1, 4); K.px(fc, x + 3, y, "#e8e6df", 1, 4); } K.px(fc, r.cx - 1, y + 1, "#e8e6df", 3, 1); },
     repro: (r, sk, t, p) => { const x = r.handR.x, y = r.handR.y - 5 + (p.mood === "work" ? Math.round(Math.sin(t * 4)) : 0); K.draw(fc, [".ww.", "w..w", "w..w", ".ww.", "...g", "....g"], x, y, {}); },
     reviewer: (r) => { K.px(fc, r.handR.x, r.handR.y - 4, "#e0675a", 1, 4); K.px(fc, r.handR.x, r.handR.y, "#e8e6df", 1, 1); },
+    desk: (r) => { K.px(fc, r.cx - 2, r.top + 5, "#f4f1e8", 5, 1); K.px(fc, r.cx, r.top + 6, "#d9b44a", 1, 4); K.px(fc, r.cx - 1, r.top + 8, "#d9b44a", 3, 2); },
     watcher: (r) => { K.px(fc, r.left - 1, r.top - 2, "#55524b", r.bw + 2, 1); K.px(fc, r.left - 2, r.top - 1, "#55524b", 1, 4); K.px(fc, r.right + 1, r.top - 1, "#55524b", 1, 4); K.px(fc, r.left - 3, r.top + 1, "#e8e6df", 2, 3); K.px(fc, r.right + 1, r.top + 1, "#e8e6df", 2, 3); },
   };
 
@@ -229,7 +235,7 @@
     const now = S ? S.t + (performance.now() - last) : Date.now();
     const off = S?.o?.off;
     const mood = now - (w.t || 0) < 6000 ? w.mood : "";
-    const st = w.hold || (S?.o?.pause && w.st !== "work") || S?.o?.man ? "sleep" : off && w.st !== "work" ? "off" : w.st;
+    const st = o.awake ? w.st : w.hold || (S?.o?.pause && w.st !== "work") || S?.o?.man ? "sleep" : off && w.st !== "work" ? "off" : w.st;
     const sd = (o.seed ?? n.length) * 1.7;
     const p = K.pose();
     p.legs = "sit";
@@ -266,7 +272,8 @@
     if (o.fit) FIT[o.fit % FIT.length](r, FITC[(o.fc ?? o.fit) % FITC.length]);
     if (acc[n]) acc[n](r, sk, t, p);
     if (pt) HAT(r, t + sd);
-    c.drawImage(fig, Math.round(x - 24), Math.round(y - 41));
+    const z = o.z || 1;
+    c.drawImage(fig, Math.round(x - 24 * z), Math.round(y - 41 * z), K.W * z, K.H * z);
     if (st === "sleep" && !pt) {
       const k = ((t + sd) * 0.6) % 1;
       c.globalAlpha = 1 - k;
@@ -384,6 +391,30 @@
     }
   };
 
+  // The front desk wing: an entrance door in the top wall, a carpet and the
+  // boss, drawn twice the size of the other workers, at a big black desk.
+  const wing = (t) => {
+    const l = lt(), [x, y] = AN.desk;
+    px(400, 35, 1, VH - 35, l ? "#d5dce4" : "#16171a");
+    px(x - 17, 8, 34, 26, l ? "#9aa3ad" : "#24272d");
+    px(x - 15, 10, 30, 24, l ? "#5a5f69" : "#17181c");
+    px(x - 14, 11, 13, 22, l ? "#666c77" : "#1b1c21");
+    px(x + 1, 11, 13, 22, l ? "#666c77" : "#1b1c21");
+    px(x - 4, 21, 2, 2, "#d9b44a"); px(x + 3, 21, 2, 2, "#d9b44a");
+    px(x - 9, 35, 18, y - 82, l ? "#d7b9bd" : "#2a1316");
+    px(x - 8, 35, 16, y - 82, l ? "#e4c9cc" : "#341719");
+    const busy = !!window.AO.deskBusy;
+    hits.push({ k: "w:desk:", b: [x - 32, y - 52, x + 34, y + 20], n: "desk" });
+    crab("desk", x + 3, y + 13, t, { st: busy ? "work" : "idle", awake: true, seed: 5, z: 3 });
+    px(x - 37, y, 74, 5, l ? "#3a3d44" : "#1d1e23");
+    px(x - 37, y + 5, 74, 12, l ? "#2b2d33" : "#131417");
+    px(x - 37, y + 5, 74, 1, "#d9b44a");
+    px(x - 34, y + 17, 3, 4, l ? "#2b2d33" : "#0f1012");
+    px(x + 31, y + 17, 3, 4, l ? "#2b2d33" : "#0f1012");
+    px(x - 9, y + 9, 18, 4, "#d9b44a");
+    if (busy) px(x - 3, y - 2, 6, 2, Math.floor(t * 6) % 2 ? "#d9b44a" : "#8a7432");
+    tx("FRONT DESK", x - (K.textWidth("FRONT DESK") >> 1), y + 26, busy ? "#d9b44a" : "#4a4d54");
+  };
   const plant = (x, y) => {
     px(x - 3, y, 7, 6, "#2a2c32");
     K.draw(c, ["..e.e..", ".eEe.e.", "e.eEee.", ".eeEe.e", "..eEe.."], x - 3, y - 5, {});
@@ -400,6 +431,7 @@
     radio(292, 9, t);
     plant(248, 112);
     plant(392, 210);
+    wing(t);
     paths(t);
     intake(t);
     RK().forEach(([h, lb], i) => rack(272 + i * 19, 100, t, h, lb));
@@ -612,7 +644,10 @@
   const bar = (v, mx) => { const p = Math.max(0, Math.min(100, (v / mx) * 100)); return `<span class="bar"><i class="${p > 85 ? "hi" : ""}" style="width:${p.toFixed(0)}%"></i></span>`; };
   const gb = (m) => (m / 1024).toFixed(m < 10240 ? 1 : 0);
   const tr = (k, v) => `<div class="tr"><span class="k">${k}</span><span>${v}</span></div>`;
+  const dtip = () => `<div class="th"><b>${NM.desk}</b><span>${window.AO.deskBusy ? "thinking" : "click to talk"}</span></div>`
+    + `<div class="td">${esc(DESC.desk)}</div><div class="td bad2">${esc(DWARN)}</div>`;
   const wtip = (h) => {
+    if (h.n === "desk") return dtip();
     const w = S.w[h.n] || {}, q = h.q || (w.job && S.q.find((x) => x.id === w.job));
     const st = w.hold ? "held" : S.o.man || S.o.pause ? "paused" : h.q ? "work" : w.st || "idle";
     const cs = (w.cmds || []).length ? w.cmds.slice(-4).reverse() : S.ev.filter((e) => e.w === h.n).slice(0, 3).map((e) => [e.t, e.m]);
@@ -654,7 +689,7 @@
     mx = e.clientX; my = e.clientY;
     const h = at(e);
     hov = h ? h.k : null;
-    cv.style.cursor = h && (h.h || h.q || (S?.w?.[h.n]?.job)) ? "pointer" : "";
+    cv.style.cursor = h && (h.h || h.q || h.n === "desk" || (S?.w?.[h.n]?.job)) ? "pointer" : "";
     tip();
   });
   cv.addEventListener("mouseleave", () => { hov = null; cv.style.cursor = ""; tip(); });
@@ -662,6 +697,7 @@
     const h = at(e);
     if (!h) return;
     if (h.h) return window.AO.hosts && window.AO.hosts();
+    if (h.n === "desk") return window.AO.chat && window.AO.chat(true);
     const id = h.q?.id || S?.w?.[h.n]?.job;
     if (id && S.q.some((q) => q.id === id)) window.AO.job && window.AO.job(id);
   });
