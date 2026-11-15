@@ -651,7 +651,7 @@ pub fn body(j: &Job, f: &Value, ci: &str, ft: &str) -> String {
         if j.hunt() {
             v.push(format!("Found while testing `{}` (no existing issue): {}.", j.d["hunt"]["where"].as_str().unwrap_or(""), j.d["hunt"]["title"].as_str().unwrap_or("")));
         } else if j.ext() {
-            v.push("Reported to us directly (no existing issue).".to_string());
+            v.push(if j.feat() { "Requested directly (no existing issue)." } else { "Reported to us directly (no existing issue)." }.to_string());
         } else if j.feat() {
             v.push(format!("Closes #{}", j.num));
         } else {
@@ -1139,7 +1139,7 @@ async fn submit(a: &Ax, j: &mut Job) -> R<(String, i64)> {
     let tr = trs(j);
     let ti = j.d["pt"].as_str().map(String::from).filter(|x| !x.trim().is_empty()).unwrap_or(f["title"].as_str().unwrap_or(&j.title).to_string());
     if j.kind == "fix" && !j.d["sq"].as_bool().unwrap_or(false) {
-        let rf = if j.ext() { "Reported to us directly".to_string() } else if j.hunt() || j.num == 0 { format!("Found while testing {}", j.wh()) } else { format!("Fixes #{}", j.num) };
+        let rf = if j.ext() { if j.feat() { "Requested directly" } else { "Reported to us directly" }.to_string() } else if j.hunt() || j.num == 0 { format!("Found while testing {}", j.wh()) } else { format!("Fixes #{}", j.num) };
         ok(a, j, &format!("git reset -q --soft {} && git commit -q -F - <<'MSG'\n{ti}\n\n{rf}\n\n{}\nMSG", j.s("base"), tr.join("\n")), 120).await?;
         j.d["sq"] = json!(true);
         a.db.jd(j);

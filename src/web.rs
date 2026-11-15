@@ -634,7 +634,7 @@ async fn ws(a: Ax, mut s: WebSocket) {
     }
 }
 
-fn rid(s: &str) -> Option<String> {
+pub fn rid(s: &str) -> Option<String> {
     let s = s.trim().trim_start_matches("https://github.com/").trim_end_matches('/').trim_end_matches(".git");
     let re = regex::Regex::new(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$").unwrap();
     if re.is_match(s) {
@@ -723,6 +723,10 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
             }
             js(state(a))
         }
+        ("POST", "/api/chat") => match crate::desk::chat(a, &b).await {
+            Ok(v) => js(v),
+            Err(e) => er(StatusCode::BAD_REQUEST, &e),
+        },
         ("POST", "/api/repo") => {
             let op = b["op"].as_str().unwrap_or("");
             let Some(r) = rid(b["full"].as_str().unwrap_or("")) else { return er(StatusCode::BAD_REQUEST, "use owner/name") };

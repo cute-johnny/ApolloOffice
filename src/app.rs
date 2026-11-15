@@ -147,7 +147,7 @@ pub fn dset() -> Value {
         "md": {
             "scout": "claude-haiku-5-5", "guard": "claude-haiku-5-5", "vet": "claude-haiku-5-5", "watcher": "claude-haiku-5-5",
             "repro": "claude-haiku-5-5", "repro2": "claude-sonnet-5-5", "fixer": "claude-sonnet-5-5", "hunter": "claude-sonnet-5-5",
-            "reviewer": "claude-haiku-5-5", "big": "claude-opus-5-5"
+            "reviewer": "claude-haiku-5-5", "big": "claude-opus-5-5", "desk": "claude-sonnet-5-5"
         },
         "big": true,
         "hunters": 2,

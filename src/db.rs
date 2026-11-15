@@ -239,6 +239,8 @@ impl Job {
     pub fn orig(&self) -> String {
         if self.hunt() {
             "Bug found by our own testing (there is no GitHub issue; do not reference one)".into()
+        } else if self.ext() && self.feat() {
+            format!("Feature request sent to us directly from {} (there is no GitHub issue; do not reference one)", self.d["ext"]["src"].as_str().unwrap_or("an external tool"))
         } else if self.ext() {
             format!("Bug report sent to us directly from {} (there is no GitHub issue; do not reference one)", self.d["ext"]["src"].as_str().unwrap_or("an external tool"))
         } else if self.feat() {
