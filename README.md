@@ -112,10 +112,15 @@ asks before it starts anything. Hover any worker to read what it does.
 
 On the office floor the front desk is the big boss in the black suit at the
 entrance on the right. Click him to open the chat; he types while he works on
-an answer. Be careful what you ask him: one message can start work for Vet,
-Repro, Fixer and Hunter at once and use their models' budget, so name the
-repository and say exactly what you want. The chat repeats this warning at the
-top.
+an answer.
+
+He never starts work on his own. Each answer comes with a plan: one line per
+job, the worker it goes to, and what starting it costs. Untick what you do not
+want and press **Start**; nothing is queued before that. One plan can put work
+on Vet, Repro, Fixer and Hunter at once and use their models' budget, so check
+it first. If a bug or feature looks like a job that is already in the office,
+the plan says so and leaves it unticked; tick it to start it anyway. Pressing
+Start twice never creates the same job twice.
 
 ## Report failed CI runs
 
