@@ -180,6 +180,27 @@ button.dng { color: var(--bad); }
 .lm input[type=number] { width: 90px; }
 button:disabled { opacity: .55; cursor: default; }
 @media (max-width: 560px) { .rr summary { grid-template-columns: 1fr; } .rr .rc { justify-content: flex-start; } }
+#bAsk { color: #0b0c0e; background: var(--info); border-color: var(--info); font-weight: 600; flex: none; }
+#bAsk:hover, #bAsk.on { background: #8fd2f0; border-color: #8fd2f0; }
+#chat { position: fixed; right: 14px; bottom: 14px; z-index: 15; width: min(400px, calc(100vw - 28px)); height: min(580px, calc(100vh - 70px)); background: var(--p); border: 1px solid var(--l); border-radius: var(--r); display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+#chat .chh { display: flex; align-items: center; gap: 6px; padding: 9px 10px 9px 12px; border-bottom: 1px solid var(--l); }
+#chat .chh h3 { margin: 0; flex: 1; font: 600 12px/1 var(--m); letter-spacing: .1em; text-transform: uppercase; }
+#chat .chl { flex: 1; min-height: 0; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+#chat .cm { flex: none; max-width: 88%; padding: 7px 10px; border-radius: 10px; font-size: 13px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+#chat .cm.you { align-self: flex-end; background: var(--l); border-bottom-right-radius: 3px; }
+#chat .cm.desk { align-self: flex-start; background: var(--g); border: 1px solid var(--l); border-bottom-left-radius: 3px; }
+#chat .cm.wait { color: var(--t3); font-style: italic; }
+#chat .cj { display: block; width: 100%; margin-top: 7px; padding: 6px 8px; text-align: left; white-space: normal; font: 11px/1.4 var(--m); color: var(--t2); background: var(--p); }
+#chat .cj:hover { border-color: var(--t3); background: var(--h); }
+#chat .cj b { color: var(--ok); font-weight: 600; }
+#chat .ce { margin-top: 7px; font: 11px/1.4 var(--m); color: var(--bad); }
+#chat .ci { margin: auto 0; color: var(--t2); font-size: 13px; }
+#chat .ci b { color: var(--t1); font-size: 14px; }
+#chat .ci p { margin: 6px 0 10px; }
+#chat .cx { display: flex; flex-direction: column; gap: 5px; }
+#chat .cx button { text-align: left; white-space: normal; line-height: 1.35; color: var(--t2); }
+#chat form { display: flex; gap: 8px; align-items: flex-end; padding: 10px; border-top: 1px solid var(--l); }
+#chat textarea { min-height: 0; height: 52px; resize: none; font: 13px/1.4 var(--s); }
 .sec { margin: 0 0 18px; }
 .sec h4 { font: 600 11px/1 var(--m); letter-spacing: .1em; text-transform: uppercase; color: var(--t2); margin: 0 0 8px; }
 .box { border: 1px solid var(--l); border-radius: var(--r); padding: 10px 12px; margin: 0 0 8px; background: var(--g); }
@@ -251,6 +272,7 @@ pre.df .ad { color: var(--ok); } pre.df .rm { color: var(--bad); } pre.df .hh { 
   button.go { padding: 6px 10px; font-size: 11px; }
   .ban { margin-bottom: 10px; }
   #dr .pn { width: 100%; border-left: 0; }
+  #chat { inset: 0; width: auto; height: auto; border: 0; border-radius: 0; }
   .fm { grid-template-columns: 1fr; }
   .fm .hint, .hint { grid-column: 1; }
   .dzr { flex-direction: column; align-items: stretch; }
@@ -265,6 +287,7 @@ pre.df .ad { color: var(--ok); } pre.df .rm { color: var(--bad); } pre.df .hh { 
   <span class="chip" id="cHo"></span>
   <span class="chip" id="cQ"></span>
   <span class="sp"></span>
+  <button id="bAsk" title="Tell the office what you need in your own words">Ask the office</button>
   <button id="bCost">Costs</button>
   <button id="bRepos">Repos</button>
   <button id="bHosts">Machines</button>
@@ -285,6 +308,12 @@ pre.df .ad { color: var(--ok); } pre.df .rm { color: var(--bad); } pre.df .hh { 
 <div id="dr" hidden><div class="pn"><div class="ph"><h3 id="drT"></h3><button id="drX">Close</button></div><div class="pb" id="drB"></div></div></div>
 <script src="body.js"></script>
 <script src="o.js"></script>
+<div id="chat" hidden>
+  <div class="chh"><h3>Front desk</h3><button id="chG" title="Model and provider for the front desk">Model</button><button id="chN" title="Forget this conversation and start over">New chat</button><button id="chX">Close</button></div>
+  <div class="chl" id="chL" aria-live="polite"></div>
+  <form id="chF"><textarea id="chI" placeholder="Describe a bug or a feature, or name an issue…" aria-label="Message to the front desk"></textarea><button class="pri" id="chS">Send</button></form>
+</div>
 <script src="p.js"></script>
+<script src="c.js"></script>
 </body>
 </html>

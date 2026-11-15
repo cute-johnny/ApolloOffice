@@ -28,7 +28,7 @@
     submit: { body: "#5cbf6a", dark: "#3d9149", light: "#94dd9e" },
     watcher: { body: "#4fb3e0", dark: "#2f86b0", light: "#8fd2f0" },
   };
-  const NM = { hunter: "Hunter", scout: "Scout", guard: "Guard", vet: "Vet", repro: "Repro", fixer: "Fixer", ci: "CI", reviewer: "Reviewer", submit: "Submit", watcher: "Watcher" };
+  const NM = { hunter: "Hunter", scout: "Scout", guard: "Guard", vet: "Vet", repro: "Repro", fixer: "Fixer", ci: "CI", reviewer: "Reviewer", submit: "Submit", watcher: "Watcher", desk: "Front desk" };
   window.AO.NM = NM;
   const DESC = {
     scout: "Scans the open GitHub issues of your repositories and picks the ones that look like fixable bugs or wanted features.",

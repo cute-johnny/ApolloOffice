@@ -231,7 +231,7 @@
     }
   };
 
-  const RK = { scout: [["scout", "Model"]], guard: [["guard", "Model"]], vet: [["vet", "Model"]], watcher: [["watcher", "Model"]], hunter: [["hunter", "Model"]], reviewer: [["reviewer", "Model"]], repro: [["repro", "First try"], ["repro2", "Second try"]], fixer: [["fixer", "Model"], ["big", "Complex bugs"]] };
+  const RK = { scout: [["scout", "Model"]], guard: [["guard", "Model"]], vet: [["vet", "Model"]], watcher: [["watcher", "Model"]], hunter: [["hunter", "Model"]], reviewer: [["reviewer", "Model"]], repro: [["repro", "First try"], ["repro2", "Second try"]], fixer: [["fixer", "Model"], ["big", "Complex bugs"]], desk: [["desk", "Model"]] };
   const TOOLS = ["hunter", "repro", "fixer"];
   const split = (v) => { const i = (v || "").indexOf(":"), p = i > 0 ? v.slice(0, i) : ""; return cfg.prov.some((x) => x.id === p) ? [p, v.slice(i + 1)] : ["cc", v || ""]; };
   const join = (p, m) => (p === "cc" ? m : p + ":" + m);
@@ -309,7 +309,7 @@
         <div class="hint">Keys are stored encrypted on this computer. Claude Code and Codex use their own CLI logins. Pick a model per worker under Models below.</div>
       </div></div></div>
       <div data-tab="md" class="sec"><h4>Models</h4><div class="box"><div class="fm" style="margin:0">
-        ${["scout", "guard", "vet", "hunter", "repro", "fixer", "reviewer", "watcher"].map((w) => `<label>${esc(A.NM?.[w] || w)}</label><div class="ck"><span style="flex:1">${RK[w].map(([k, l]) => esc((RK[w].length > 1 ? l + ": " : "") + (A.mdn ? A.mdn(s.md[k]) : s.md[k]))).join(" · ")}</span><button type="button" data-role="${w}">Change</button></div>`).join("")}
+        ${["desk", "scout", "guard", "vet", "hunter", "repro", "fixer", "reviewer", "watcher"].map((w) => `<label>${esc(A.NM?.[w] || w)}</label><div class="ck"><span style="flex:1">${RK[w].map(([k, l]) => esc((RK[w].length > 1 ? l + ": " : "") + (A.mdn ? A.mdn(s.md[k]) : s.md[k]))).join(" · ")}</span><button type="button" data-role="${w}">Change</button></div>`).join("")}
         <div class="hint">Also reachable with the gear on each worker's card.</div>
       </div></div></div>
       <div data-tab="gen" class="sec"><h4>Sign in</h4><div class="box">${cfg.google ? `<div class="ck"><b class="ok2">Google</b> ${esc(cfg.google)} can sign in.</div><div class="acts"><button type="button" class="dng" id="gu">Disconnect Google</button></div>` : `<div class="ck">Sign in with a one-time link from <code>apollo-office login-link</code>, or connect a Google account.</div><div class="acts"><button type="button" id="gl">Connect Google account</button></div>`}</div></div>
