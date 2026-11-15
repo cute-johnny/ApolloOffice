@@ -53,11 +53,11 @@
   const DWARN = "Careful: he manages the whole office. One plan from him can put work on Vet, Repro, Fixer and Hunter at once and spend their models' budget. Nothing starts until you press Start on his plan, so check it first.";
   window.AO.DWARN = DWARN;
   window.AO.DESC = DESC;
-  const ORD = ["scout", "guard", "vet", "watcher", "hunter", "repro", "fixer", "ci", "design_fixer", "tester", "reviewer", "submit"];
+  const ORD = ["scout", "guard", "vet", "architect", "watcher", "hunter", "repro", "fixer", "ci", "design_fixer", "tester", "reviewer", "submit"];
 
   // The floor is 464 wide; the 84 pixels on the right are the front desk wing.
   const VW = 548, VH = 258;
-  const AN = { scout: [34, 74], guard: [74, 74], vet: [150, 74], watcher: [226, 74], repro: [64, 164], fixer: [106, 164], design_fixer: [148, 164], tester: [190, 164], ci: [391, 100], reviewer: [232, 164], submit: [274, 164], desk: [506, 172] };
+  const AN = { scout: [34, 74], guard: [74, 74], vet: [150, 74], watcher: [226, 74], architect: [272, 74], repro: [64, 164], fixer: [106, 164], design_fixer: [148, 164], tester: [190, 164], ci: [391, 100], reviewer: [232, 164], submit: [274, 164], desk: [506, 172] };
   const TEAM = [["hunter", "hunt", 0], ["repro", "repro", 8], ["fixer", "fix", 102], ["design_fixer", "design", 166], ["tester", "test", 230], ["reviewer", "review", 294], ["submit", "submit", 358]];
   const FITC = ["#e8e6df", "#1b1a18", "#4fb3e0", "#e0675a", "#5cbf6a", "#9c7ae0", "#d0649f", "#8d9199"];
 
@@ -218,6 +218,7 @@
     repro: (r, sk, t, p) => { const x = r.handR.x, y = r.handR.y - 5 + (p.mood === "work" ? Math.round(Math.sin(t * 4)) : 0); K.draw(fc, [".ww.", "w..w", "w..w", ".ww.", "...g", "....g"], x, y, {}); },
     design_fixer: (r, sk) => { K.px(fc, r.handR.x, r.handR.y - 4, "#86704f", 1, 4); K.px(fc, r.handR.x, r.handR.y - 5, "#d9b44a", 1, 1); K.px(fc, r.handR.x - 1, r.handR.y - 7, sk.light, 3, 2); },
     tester: (r) => { K.px(fc, r.handR.x - 1, r.handR.y - 5, "#e8e6df", 4, 5); K.px(fc, r.handR.x, r.handR.y - 4, "#469359", 2, 1); K.px(fc, r.handR.x, r.handR.y - 2, "#469359", 2, 1); },
+    architect: (r) => { K.px(fc, r.handR.x - 1, r.handR.y - 5, "#4fb3e0", 4, 5); K.px(fc, r.handR.x, r.handR.y - 4, "#e8e6df", 2, 1); K.px(fc, r.handR.x, r.handR.y - 2, "#e8e6df", 2, 1); },
     reviewer: (r) => { K.px(fc, r.handR.x, r.handR.y - 4, "#e0675a", 1, 4); K.px(fc, r.handR.x, r.handR.y, "#e8e6df", 1, 1); },
     desk: (r) => { K.px(fc, r.cx - 2, r.top + 5, "#f4f1e8", 5, 1); K.px(fc, r.cx, r.top + 6, "#d9b44a", 1, 4); K.px(fc, r.cx - 1, r.top + 8, "#d9b44a", 3, 2); },
     watcher: (r) => { K.px(fc, r.left - 1, r.top - 2, "#55524b", r.bw + 2, 1); K.px(fc, r.left - 2, r.top - 1, "#55524b", 1, 4); K.px(fc, r.right + 1, r.top - 1, "#55524b", 1, 4); K.px(fc, r.left - 3, r.top + 1, "#e8e6df", 2, 3); K.px(fc, r.right + 1, r.top + 1, "#e8e6df", 2, 3); },
@@ -304,7 +305,7 @@
   const RK = () => (S?.hs || []).filter((h) => h.on_).slice(0, 7).map((h) => [h.id, RL(h.id)]);
   const rack = (x, y, t, h, lb) => {
     hits.push({ k: "h:" + h, b: [x - 9, y - 41, x + 9, y + 21], h });
-    const jbs = (S?.q || []).filter((q) => q.h === h && ["repro", "fix", "ci", "design", "test", "review", "gate", "submit"].includes(q.st));
+    const jbs = (S?.q || []).filter((q) => q.h === h && ["plan", "repro", "fix", "ci", "design", "test", "review", "gate", "submit"].includes(q.st));
     const ci = jbs.some((q) => q.st === "ci"), busy = jbs.length > 0;
     const down = S?.o?.net?.[h] === false;
     px(x - 7, y - 34, 14, 46, "#1c1e22");
@@ -336,6 +337,7 @@
     const vn = S?.o?.vn ?? (S?.w?.vet?.st === "work" ? 1 : 0);
     for (let k = 0; k < 3; k++) seat("vet", 114 + k * 36, 74, t, { st: k < vn ? "work" : "idle", seed: 11 + k, fit: k ? k + 2 : 0, fc: k + 4, vk: k }, k === 1 ? "VET" : "", k < vn);
     seat("watcher", 226, 74, t, { seed: 7 }, "WATCHER", S?.w?.watcher?.st === "work");
+    seat("architect", 272, 74, t, { seed: 9 }, "ARCH", S?.w?.architect?.st === "work");
     px(334, 128, 120, 1, "#1d1f24");
 
   };
@@ -365,7 +367,7 @@
     for (const i of it) {
       if (i.f) {
         AN[i.n] = [i.x, i.y];
-        tx(NM[i.n].toUpperCase() + (i.c > 1 ? " X" + i.c : ""), i.x - 12, i.y - 36, i.c ? hl(i.n) : "#4a4d54");
+        tx((i.n === "design_fixer" ? "DESIGN" : NM[i.n].toUpperCase()) + (i.c > 1 ? " X" + i.c : ""), i.x - 12, i.y - 36, i.c ? hl(i.n) : "#4a4d54");
       }
       if (!i.q) seat(i.n, i.x, i.y, t, { seed: i.x }, "", false);
       else seat(i.n, i.x, i.y, t, { st: "work", seed: i.q.id, fit: (i.q.id * 7) % 9 + 1, fc: i.q.id * 3, q: i.q }, short(i.q), true);
@@ -452,10 +454,14 @@
     }
     if (S?.o?.off) { c.globalAlpha = 0.25; px(0, 35, VW, VH - 35, "#000"); c.globalAlpha = 1; }
     const dp = window.devicePixelRatio || 1, sg = $("stage");
-    const sc = Math.max(1, Math.floor(Math.min((sg.clientWidth - 2) * dp / VW, (sg.clientHeight - 2) * dp / VH)));
-    if (cv.width !== VW * sc) { cv.width = VW * sc; cv.height = VH * sc; cv.style.width = VW * sc / dp + "px"; cv.style.height = VH * sc / dp + "px"; }
+    const fit = Math.max(1, Math.min((sg.clientWidth - 4) / VW, (sg.clientHeight - 4) / VH));
+    const sc = Math.max(2, Math.ceil(fit * dp));
+    const bw = VW * sc, bh = VH * sc;
+    if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
+    cv.style.width = Math.floor(VW * fit) + "px";
+    cv.style.height = Math.floor(VH * fit) + "px";
     cx.imageSmoothingEnabled = false;
-    cx.drawImage(off, 0, 0, VW * sc, VH * sc);
+    cx.drawImage(off, 0, 0, bw, bh);
     const mg = $("mg");
     if (party()) {
       if (mg.hidden || mg.dataset.k !== S.lm.repo + S.lm.num) {
@@ -501,7 +507,7 @@
       };
       el.onmouseleave = () => { hovT = null; tip(); };
     }
-    const STG = { hunter: ["hunt"], repro: ["repro"], fixer: ["fix"], ci: ["ci"], design_fixer: ["design"], tester: ["test"], reviewer: ["review"], submit: ["gate", "submit"] };
+    const STG = { architect: ["plan"], hunter: ["hunt"], repro: ["repro"], fixer: ["fix"], ci: ["ci"], design_fixer: ["design"], tester: ["test"], reviewer: ["review"], submit: ["gate", "submit"] };
     for (const t of el.children) {
       const n = t.dataset.w, w = S.w[n] || { st: "idle", say: "", md: "", tk: 0 };
       const cn = STG[n] ? S.q.filter((q) => STG[n].includes(q.st)).length : n === "vet" ? S.o.vn || 0 : 0;
