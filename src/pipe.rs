@@ -43,7 +43,7 @@ pub(crate) async fn x(a: &Ax, j: &Job, s: &str, t: u64) -> Out {
     hx(a, &j.h(), &format!("cd \"{}\" && {s}", dir(a, j)), t).await
 }
 
-async fn ok(a: &Ax, j: &Job, s: &str, t: u64) -> R<String> {
+pub(crate) async fn ok(a: &Ax, j: &Job, s: &str, t: u64) -> R<String> {
     let ro = Regex::new(r"^git (log|diff|rev-parse|rev-list|status|symbolic-ref|range-diff) [^;&|]*(\| head -c \d+)?$").unwrap();
     let mut r = x(a, j, s, t).await;
     for _ in 0..2 {
@@ -162,7 +162,7 @@ pub fn cfg_ok(l: &str, url: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn use_(a: &Ax, j: &mut Job, md: &str) {
+pub(crate) fn use_(a: &Ax, j: &mut Job, md: &str) {
     let mut ms: Vec<String> = j.d["ms"].as_array().cloned().unwrap_or_default().iter().filter_map(|x| x.as_str().map(String::from)).collect();
     if !ms.iter().any(|x| x == md) {
         ms.push(md.into());
@@ -171,7 +171,7 @@ fn use_(a: &Ax, j: &mut Job, md: &str) {
     }
 }
 
-fn trs(j: &Job) -> Vec<String> {
+pub(crate) fn trs(j: &Job) -> Vec<String> {
     let ms: BTreeSet<String> = j.d["ms"].as_array().cloned().unwrap_or_default().iter().filter_map(|x| x.as_str().map(|m| format!("Co-Authored-By: {} <{}>", crate::prov::name(m), crate::prov::mail(m)))).collect();
     ms.into_iter().collect()
 }
@@ -209,7 +209,7 @@ fn bslug(j: &Job) -> String {
 
 const ART: &[&str] = &[".venv-bootstrap/", ".venv/", "venv/", "__pycache__/", "*.pyc", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".tox/", ".coverage", "node_modules/", ".next/", ".turbo/", "target/", ".gradle/", ".apollo/artifacts/"];
 
-async fn prep(a: &Ax, j: &mut Job) -> R<()> {
+pub(crate) async fn prep(a: &Ax, j: &mut Job) -> R<()> {
     need(a, "repro", &[&j.h(), "gh"]).await?;
     if j.d["rp"].as_bool().unwrap_or(false) {
         j.d.as_object_mut().unwrap().remove("rp");
@@ -253,16 +253,31 @@ async fn prep(a: &Ax, j: &mut Job) -> R<()> {
     ok(a, j, &format!("mkdir -p .git/info && printf '%s\\n' {} > .git/info/exclude", ART.iter().map(|x| q(x)).collect::<Vec<_>>().join(" ")), 60).await?;
     let me = crate::gh::me(a).await.map_err(X::E)?;
     ok(a, j, &format!("git config user.name {} && git config user.email {}", q(me["name"].as_str().unwrap_or("")), q(me["mail"].as_str().unwrap_or(""))), 60).await?;
-    let new_branch = matches!(j.kind.as_str(), "fix" | "hunt" | "design_fix" | "test_app" | "build");
-    let br = if new_branch { bslug(j) } else { j.s("branch") };
-    if new_branch {
+    let new_branch = matches!(j.kind.as_str(), "fix" | "hunt" | "design_fix" | "test_app" | "build" | "architect");
+    let br = if j.kind == "architect" {
+        j.project_id
+            .and_then(|pid| a.db.pg(pid))
+            .map(|p| p.epic_branch)
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("epic/proj-{}", j.project_id.unwrap_or(j.id)))
+    } else if j.kind == "epic_pr" {
+        j.parent_branch.clone()
+    } else if new_branch {
+        bslug(j)
+    } else {
+        j.s("branch")
+    };
+    if j.kind == "epic_pr" {
+        pull(a, j, &url, &br, &format!("refs/remotes/origin/{br}")).await?;
+        ok(a, j, &format!("git checkout -q -B {} origin/{}", q(&br), q(&br)), 1800).await?;
+    } else if new_branch {
         let at = if !j.parent_branch.is_empty() && j.kind == "build" {
             j.parent_branch.clone()
         } else {
             j.s("at")
         };
         if !j.parent_branch.is_empty() && j.kind == "build" {
-            pull(a, j, &url, &j.parent_branch, &format!("refs/remotes/origin/{}", j.parent_branch)).await.ok();
+            pull(a, j, &url, &j.parent_branch, &format!("refs/remotes/origin/{}", j.parent_branch)).await?;
         }
         let base_ref = if at.is_empty() { format!("origin/{}", q(&mn)) } else if at == j.parent_branch { format!("origin/{}", q(&at)) } else { q(&at) };
         ok(a, j, &format!("git checkout -q -B {} {base_ref}", q(&br)), 1800).await?;
@@ -289,11 +304,11 @@ async fn prep(a: &Ax, j: &mut Job) -> R<()> {
     Ok(())
 }
 
-fn rn(a: &Ax, j: &Job) -> Option<Rn> {
+pub(crate) fn rn(a: &Ax, j: &Job) -> Option<Rn> {
     Some(Rn { h: j.h(), dir: dir(a, j), w: String::new(), md: String::new(), job: Some(j.id), ..Default::default() })
 }
 
-fn answers_context(j: &Job) -> String {
+pub(crate) fn answers_context(j: &Job) -> String {
     let mut lines = vec![];
     if let Some(arr) = j.d["answers"].as_array() {
         for item in arr {
@@ -324,7 +339,7 @@ fn answers_context(j: &Job) -> String {
     }
 }
 
-fn rules(a: &Ax, j: &Job) -> String {
+pub(crate) fn rules(a: &Ax, j: &Job) -> String {
     let r = rp(a, &j.repo)["rules"].as_str().unwrap_or("").trim().to_string();
     if r.is_empty() {
         String::new()
@@ -1175,6 +1190,74 @@ async fn mkbody(a: &Ax, j: &mut Job) -> R<()> {
     Ok(())
 }
 
+pub(crate) async fn push_branch(
+    a: &Ax,
+    j: &Job,
+    br: &str,
+    base_sha: &str,
+    hr: &str,
+    fo: &str,
+) -> R<String> {
+    let sha = ok(a, j, "git rev-parse HEAD", 60).await?;
+    if std::env::var("APOLLO_OFFICE_DRY").map(|v| v == "1").unwrap_or(false) || j.d["dry"].as_bool().unwrap_or(false) {
+        return Ok(sha);
+    }
+    let url = format!("{}{}.git", gitb(), hr);
+    let pr = format!("refs/ao/push/{}", j.id);
+    if !j.s("mn").is_empty() {
+        let _ = lg(a, &j.repo, &["fetch", "-q", "--no-tags", &format!("{}{}.git", gitb(), j.repo), &format!("+refs/heads/{}:refs/ao/main", j.s("mn"))], true, 1800).await;
+    }
+    let tf = format!("/tmp/ao-out-{}.bundle", j.id);
+    let bf = a.dd.join("run").join(format!("out-{}.bundle", j.id));
+    let _ = std::fs::create_dir_all(bf.parent().unwrap());
+    let bfs = bf.display().to_string();
+    let mut got = false;
+    for ex in [true, false] {
+        let excl = if ex && !base_sha.is_empty() { format!("^{}", q(base_sha)) } else { String::new() };
+        let c = format!("cd \"{}\" && rm -f {tf} && git bundle create -q {tf} {} {excl} >/dev/null 2>&1 || exit 3; base64 < {tf} | tr -d '\\n\\r'; rm -f {tf}", dir(a, j), q(&format!("refs/heads/{br}")));
+        let o = crate::sh::hxk(a, &j.h(), &c, 1800).await;
+        if o.c != 0 {
+            continue;
+        }
+        let Ok(b) = base64::engine::general_purpose::STANDARD.decode(o.o.trim()) else { continue };
+        if std::fs::write(&bf, b).is_err() {
+            continue;
+        }
+        let f = lg(a, &j.repo, &["fetch", "-q", "--no-tags", &bfs, &format!("+refs/heads/{br}:{pr}")], false, 600).await;
+        if f.c == 0 && lg(a, &j.repo, &["rev-parse", &pr], false, 60).await.o.trim() == sha {
+            got = true;
+            break;
+        }
+    }
+    let _ = std::fs::remove_file(&bf);
+    if !got {
+        return e("could not take the commits from the build machine");
+    }
+    let lr = |o: String| o.split_whitespace().next().unwrap_or("").to_string();
+    let rem = lr(lok(a, &j.repo, &["ls-remote", &url, &format!("refs/heads/{br}")], true, 120).await.unwrap_or_default());
+    if rem != sha {
+        if fo.is_empty() {
+            lok(a, &j.repo, &["push", "-q", &url, &format!("{pr}:refs/heads/{br}")], true, 600).await?;
+        } else {
+            lok(a, &j.repo, &["push", "-q", fo, &url, &format!("{pr}:refs/heads/{br}")], true, 600).await?;
+        }
+    }
+    let mut r2 = String::new();
+    for i in 0..4 {
+        if r2 == sha {
+            break;
+        }
+        if i > 0 {
+            sl(15_000).await;
+        }
+        r2 = lr(lok(a, &j.repo, &["ls-remote", &url, &format!("refs/heads/{br}")], true, 120).await.unwrap_or_default());
+    }
+    if r2 != sha {
+        return e("push did not arrive");
+    }
+    Ok(sha)
+}
+
 async fn submit(a: &Ax, j: &mut Job) -> R<(String, i64)> {
     // Every path, including recovery/resume, must pass this boundary before any
     // squash, push or GitHub request. A resumed job is not an approval grant.
@@ -1207,7 +1290,7 @@ async fn submit(a: &Ax, j: &mut Job) -> R<(String, i64)> {
         j.d["sq"] = json!(true);
         a.db.jd(j);
     }
-    if (j.kind == "review" || j.kind == "rebase" && !j.s("fx").is_empty()) && !j.d["sq"].as_bool().unwrap_or(false) && !tr.is_empty() {
+    if (matches!(j.kind.as_str(), "review" | "design_fix" | "test_app" | "epic_pr") || j.kind == "rebase" && !j.s("fx").is_empty()) && !j.d["sq"].as_bool().unwrap_or(false) && !tr.is_empty() {
         ok(a, j, &format!("git commit -q --amend --no-edit {}", tr.iter().map(|t| format!("--trailer {}", q(t))).collect::<Vec<_>>().join(" ")), 120).await?;
         j.d["sq"] = json!(true);
         a.db.jd(j);
@@ -1218,7 +1301,9 @@ async fn submit(a: &Ax, j: &mut Job) -> R<(String, i64)> {
     if Regex::new(r"#0\b").unwrap().is_match(&pb) || Regex::new(r"#0\b").unwrap().is_match(&msg) {
         return drop("PR text or commit still references #0, not pushing");
     }
-    if (j.kind != "rebase" || !j.s("fx").is_empty()) && (!tr.iter().all(|t| msg.contains(t)) || j.kind == "fix" && !pb.contains(ft)) {
+    let need_trailers = j.kind != "rebase" || !j.s("fx").is_empty();
+    let new_pr_kind = matches!(j.kind.as_str(), "fix" | "design_fix" | "test_app" | "epic_pr");
+    if need_trailers && (!tr.iter().all(|t| msg.contains(t)) || new_pr_kind && !pb.contains(ft)) {
         return drop("AI disclosure missing (Co-Authored-By trailer or footer), not pushing");
     }
     if std::env::var("APOLLO_OFFICE_DRY").map(|v| v == "1").unwrap_or(false) || j.d["dry"].as_bool().unwrap_or(false) {
@@ -1227,8 +1312,8 @@ async fn submit(a: &Ax, j: &mut Job) -> R<(String, i64)> {
     }
     let me = crate::gh::login(a).await;
     let mt = crate::gh::meta(a, &j.repo).await.map_err(X::E)?;
-    let hr = if j.kind == "fix" {
-        if mt["push"].as_bool().unwrap_or(false) {
+    let hr = if new_pr_kind {
+        if mt["push"].as_bool().unwrap_or(false) || gitb().starts_with("file:") {
             j.repo.clone()
         } else {
             let fk = ghj(&["api", "-X", "POST", &format!("repos/{}/forks", j.repo), "-f", "default_branch_only=true"], 120).await.map_err(X::E)?;
@@ -1247,55 +1332,9 @@ async fn submit(a: &Ax, j: &mut Job) -> R<(String, i64)> {
     } else {
         j.s("head")
     };
-    let url = format!("{}{}.git", gitb(), hr);
     let br = j.s("br");
-    let pr = format!("refs/ao/push/{}", j.id);
-    let _ = lg(a, &j.repo, &["fetch", "-q", "--no-tags", &format!("{}{}.git", gitb(), j.repo), &format!("+refs/heads/{}:refs/ao/main", j.s("mn"))], true, 1800).await;
-    let tf = format!("/tmp/ao-out-{}.bundle", j.id);
-    let bf = a.dd.join("run").join(format!("out-{}.bundle", j.id));
-    let _ = std::fs::create_dir_all(bf.parent().unwrap());
-    let bfs = bf.display().to_string();
-    let mut got = false;
-    for ex in [true, false] {
-        let c = format!("cd \"{}\" && rm -f {tf} && git bundle create -q {tf} {} {} >/dev/null 2>&1 || exit 3; base64 < {tf} | tr -d '\\n\\r'; rm -f {tf}", dir(a, j), q(&format!("refs/heads/{br}")), if ex { format!("^{}", q(&j.s("base"))) } else { String::new() });
-        let o = crate::sh::hxk(a, &j.h(), &c, 1800).await;
-        if o.c != 0 {
-            continue;
-        }
-        use base64::Engine;
-        let Ok(b) = base64::engine::general_purpose::STANDARD.decode(o.o.trim()) else { continue };
-        if std::fs::write(&bf, b).is_err() {
-            continue;
-        }
-        let f = lg(a, &j.repo, &["fetch", "-q", "--no-tags", &bfs, &format!("+refs/heads/{br}:{pr}")], false, 600).await;
-        if f.c == 0 && lg(a, &j.repo, &["rev-parse", &pr], false, 60).await.o.trim() == sha {
-            got = true;
-            break;
-        }
-    }
-    let _ = std::fs::remove_file(&bf);
-    if !got {
-        return e("could not take the commits from the build machine");
-    }
-    let lr = |o: String| o.split_whitespace().next().unwrap_or("").to_string();
-    let rem = lr(lok(a, &j.repo, &["ls-remote", &url, &format!("refs/heads/{br}")], true, 120).await.unwrap_or_default());
-    if rem != sha {
-        let fo = if j.kind == "rebase" || j.kind == "review" { format!("--force-with-lease=refs/heads/{br}:{}", j.s("old")) } else { "--force".into() };
-        lok(a, &j.repo, &["push", "-q", &fo, &url, &format!("{pr}:refs/heads/{br}")], true, 600).await?;
-    }
-    let mut r2 = String::new();
-    for i in 0..4 {
-        if r2 == sha {
-            break;
-        }
-        if i > 0 {
-            sl(15_000).await;
-        }
-        r2 = lr(lok(a, &j.repo, &["ls-remote", &url, &format!("refs/heads/{br}")], true, 120).await.unwrap_or_default());
-    }
-    if r2 != sha {
-        return e("push did not arrive");
-    }
+    let fo = if j.kind == "rebase" || j.kind == "review" { format!("--force-with-lease=refs/heads/{br}:{}", j.s("old")) } else { "--force".into() };
+    push_branch(a, j, &br, &j.s("base"), &hr, &fo).await?;
     let pn = j.pr.unwrap_or(0);
     if j.kind == "rebase" || j.kind == "review" {
         let u = format!("https://github.com/{}/pull/{pn}", j.repo);

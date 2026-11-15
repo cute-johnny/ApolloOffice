@@ -835,7 +835,7 @@ mod t {
 
     #[test]
     fn prompts() {
-        for n in ["guard", "scout", "vet", "twin", "repro", "fixer", "design_fixer", "tester", "reviewer", "hunter", "watcher", "rebase", "rebrev", "desc", "desk"] {
+        for n in ["architect", "builder", "guard", "scout", "vet", "twin", "repro", "fixer", "design_fixer", "tester", "reviewer", "hunter", "watcher", "rebase", "rebrev", "desc", "desk"] {
             assert!(!p(n).is_empty(), "{n}");
         }
     }

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 pub const V: &str = env!("CARGO_PKG_VERSION");
-pub const WS: &[&str] = &["scout", "guard", "vet", "watcher", "hunter", "repro", "fixer", "ci", "design_fixer", "tester", "reviewer", "submit"];
+pub const WS: &[&str] = &["architect", "scout", "guard", "vet", "watcher", "hunter", "repro", "fixer", "ci", "design_fixer", "tester", "reviewer", "submit"];
 
 #[derive(Clone, Serialize, Default)]
 pub struct Wk {

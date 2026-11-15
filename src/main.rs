@@ -1,5 +1,6 @@
 mod ai;
 mod app;
+mod arch;
 mod db;
 mod desk;
 mod gh;
