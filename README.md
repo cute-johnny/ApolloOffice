@@ -1,4 +1,9 @@
-<h1 align="center">ApolloOffice</h1>
+<h1 align="center">ApolloOffice Improved</h1>
+
+> **Modified version.** ApolloOffice Improved is an independently developed fork of
+> [ApolloOffice](https://github.com/Silvertree2010/ApolloOffice) by Silvertree2010,
+> based on upstream v0.10.3 (November 2026). It is not affiliated with or endorsed by
+> the original project. Licensed under the same terms, [AGPL-3.0](LICENSE).
 
 <p align="center">
   A small office of AI workers that turns GitHub issues into verified pull
@@ -122,6 +127,9 @@ always on: many projects require it, and hiding it can get you banned.
 ## License
 
 [AGPL-3.0](LICENSE)
+
+Based on [ApolloOffice](https://github.com/Silvertree2010/ApolloOffice), copyright its
+original authors. Changes made in this fork are released under the same license.
 
 [gh]: https://cli.github.com
 [cc]: https://claude.com/claude-code
