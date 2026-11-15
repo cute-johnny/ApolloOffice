@@ -152,3 +152,68 @@ async fn full_run(pv: bool) {
     let s = get("/api/state").await;
     assert_eq!(s["pr"][0]["num"], 100);
 }
+
+/// The owner's chat messages become jobs at the right worker. The office is
+/// paused so the jobs stay where the front desk put them.
+#[tokio::test(flavor = "multi_thread")]
+async fn front_desk_chat_routes_requests_to_workers() {
+    let t = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("e2e-{}-desk", std::process::id()));
+    let _ = std::fs::remove_dir_all(&t);
+    let fk = t.join("ghd");
+    std::fs::create_dir_all(&fk).unwrap();
+    std::fs::write(fk.join("issues.json"), "[]").unwrap();
+    let td = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let gw = wrap(&t, "gh", &td.join("fake-gh.py"));
+    let cw = wrap(&t, "claude", &td.join("fake-claude.py"));
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let data = t.join("data");
+    let exe = env!("CARGO_BIN_EXE_apollo-office");
+    let envs = [("APOLLO_OFFICE_GH", gw.display().to_string()), ("APOLLO_OFFICE_CLAUDE", cw.display().to_string()), ("APOLLO_OFFICE_REMOTE", furl(&t.join("remotes"))), ("APOLLO_OFFICE_FAST", "1".into()), ("FAKE_GH_DIR", fk.display().to_string())];
+    let _k = K(Command::new(exe).args(["--data", &data.display().to_string(), "--port", &port.to_string(), "--quiet"]).envs(envs.iter().cloned()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap());
+    std::thread::sleep(Duration::from_millis(1500));
+    let l = Command::new(exe).args(["--data", &data.display().to_string(), "login-link"]).output().unwrap();
+    let l = String::from_utf8_lossy(&l.stdout).lines().find(|x| x.starts_with("http")).unwrap().trim().to_string();
+    let o = format!("http://127.0.0.1:{port}");
+    let c = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().unwrap();
+    let r = c.post(&l).header("origin", &o).send().await.unwrap();
+    let ck = r.headers().get("set-cookie").unwrap().to_str().unwrap().split(';').next().unwrap().to_string();
+    let post = |p: &str, b: Value| {
+        let (c, u, ck, o) = (c.clone(), format!("{o}{p}"), ck.clone(), o.clone());
+        async move { c.post(u).header("cookie", ck).header("origin", o).header("x-ao", "1").json(&b).send().await.unwrap().json::<Value>().await.unwrap() }
+    };
+    assert_eq!(c.post(format!("{o}/api/chat")).header("origin", &o).header("x-ao", "1").json(&json!({"msgs": []})).send().await.unwrap().status().as_u16(), 401);
+    post("/api/act", json!({"a": "pause", "on": true})).await;
+    let a = post("/api/repo", json!({"op": "add", "full": "o/r"})).await;
+    assert_eq!(a["full"], "o/r", "{a}");
+
+    let mut msgs = vec![];
+    let mut say = |t: &str| {
+        msgs.push(json!({"r": "you", "t": t}));
+        json!({"msgs": msgs})
+    };
+    let r = post("/api/chat", say("Calling add 2 3 prints -1 instead of 5")).await;
+    assert_eq!(r["reply"], "Repro will reproduce the bug.", "{r}");
+    assert_eq!((r["jobs"][0]["to"].as_str(), r["jobs"][0]["new"].as_bool()), (Some("repro"), Some(true)), "{r}");
+    let r = post("/api/chat", say("Add a mul function")).await;
+    assert_eq!((r["jobs"][0]["to"].as_str(), r["jobs"][0]["kind"].as_str()), (Some("repro"), Some("feature")), "{r}");
+    let r = post("/api/chat", say("Please fix issue #1")).await;
+    assert_eq!(r["jobs"][0]["to"], "vet", "{r}");
+    let r = post("/api/chat", say("Go hunt for bugs")).await;
+    assert_eq!(r["jobs"][0]["to"], "hunter", "{r}");
+    let r = post("/api/chat", say("What about the other one?")).await;
+    assert_eq!((r["reply"].as_str(), r["jobs"].as_array().map(|x| x.len())), (Some("Which repository do you mean?"), Some(0)), "{r}");
+    let r = post("/api/chat", say("fix the crash elsewhere")).await;
+    assert_eq!(r["jobs"].as_array().unwrap().len(), 0, "{r}");
+    assert!(r["errs"][0].as_str().unwrap().contains("o/elsewhere is not added"), "{r}");
+    let r = post("/api/chat", json!({"msgs": [{"r": "desk", "t": "hello"}]})).await;
+    assert_eq!(r["error"], "write a message first", "{r}");
+
+    let s = c.get(format!("{o}/api/state")).header("cookie", &ck).send().await.unwrap().json::<Value>().await.unwrap();
+    let st: Vec<(String, String)> = s["q"].as_array().unwrap().iter().map(|j| (j["kind"].as_str().unwrap().to_string(), j["st"].as_str().unwrap().to_string())).collect();
+    assert_eq!(st.len(), 4, "{}", s["q"]);
+    for want in [("fix", "ready"), ("fix", "vet"), ("hunt", "ready")] {
+        assert!(st.contains(&(want.0.to_string(), want.1.to_string())), "{want:?} missing in {}", s["q"]);
+    }
+    assert!(s["q"].as_array().unwrap().iter().all(|j| j["why"] == "asked by the owner"), "{}", s["q"]);
+    assert_eq!(s["ev"].as_array().unwrap().iter().filter(|e| e["w"] == "desk").count(), 4, "{}", s["ev"]);
+}

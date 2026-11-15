@@ -57,6 +57,23 @@ elif f.startswith("You are Reviewer"):
     r = {"ok": True}
 elif f.startswith("You are Watcher"):
     r = {"act": False, "change": "", "draft": ""}
+elif f.startswith("You are the front desk"):
+    # Routes by keywords in the owner's last message, so tests are deterministic.
+    repo = re.search(r"Repositories in the office:\n(\S+)", p).group(1)
+    last = p.rsplit("Owner: ", 1)[-1].strip()
+    n = re.search(r"issue #(\d+)", last)
+    if n:
+        r = {"reply": "Vet will read the issue first.", "acts": [{"type": "issue", "repo": repo, "issue": int(n.group(1))}]}
+    elif "hunt" in last.lower():
+        r = {"reply": "Hunter will search the repository.", "acts": [{"type": "hunt", "repo": repo}]}
+    elif last.lower().startswith("add "):
+        r = {"reply": "Repro will plan the feature.", "acts": [{"type": "feature", "repo": repo, "title": last[:100], "body": last}]}
+    elif last.endswith("?"):
+        r = {"reply": "Which repository do you mean?", "acts": []}
+    elif "elsewhere" in last:
+        r = {"reply": "On it.", "acts": [{"type": "bug", "repo": "o/elsewhere", "title": last[:100], "body": last}]}
+    else:
+        r = {"reply": "Repro will reproduce the bug.", "acts": [{"type": "bug", "repo": repo, "title": last[:100], "body": last, "where": "add.sh"}]}
 else:
     r = {}
 emit({"type": "result", "subtype": "success", "is_error": False, "result": "```json\n" + json.dumps(r) + "\n```", "usage": {"input_tokens": 10, "output_tokens": 5}})
