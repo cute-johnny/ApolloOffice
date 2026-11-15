@@ -48,7 +48,7 @@ pub fn route(a: &Ax, act: &Value) -> Result<Value, String> {
             }
             // "gi" makes Guard screen the issue text too, as for issues sent through the API.
             let id = a.db.jnew(&r, n, "fix", &title, &format!("{url}/issues/{n}"), "vet", "asked by the owner", json!({"desk": 1, "gi": true, "feat": act["feature"].as_bool().unwrap_or(false)}), None, -1.0);
-            a.flow("scout", "vet", &format!("{r}#{n}"));
+            a.flow("desk", "vet", &format!("{r}#{n}"));
             a.say("desk", &format!("{r}#{n} asked by the owner → Vet"), Some(id));
             out(id, true, "vet", &title)
         }
@@ -65,7 +65,7 @@ pub fn route(a: &Ax, act: &Value) -> Result<Value, String> {
             // issues) is skipped and the job starts at Repro.
             let d = json!({"desk": 1, "ext": {"src": SRC, "where": wh}, "feat": feat, "title": title, "body": body, "cx": if feat || act["cx"] == "complex" { "complex" } else { "simple" }, "hint": line(act["hint"].as_str().unwrap_or(""), 500)});
             let id = a.db.jnew(&r, 0, "fix", &title, &url, "ready", "asked by the owner", d, None, -1.0);
-            a.flow("scout", "repro", &r);
+            a.flow("desk", "repro", &r);
             a.say("desk", &format!("{r} {kind} asked by the owner → Repro: {title}"), Some(id));
             out(id, true, "repro", &title)
         }
@@ -75,7 +75,7 @@ pub fn route(a: &Ax, act: &Value) -> Result<Value, String> {
                 return out(x["id"].as_i64().unwrap_or(0), false, "hunter", &title);
             }
             let id = a.db.jnew(&r, 0, "hunt", &title, &url, "ready", "asked by the owner", json!({"desk": 1}), None, 99.0);
-            a.flow("scout", "hunter", &r);
+            a.flow("desk", "hunter", &r);
             a.say("desk", &format!("{r} hunt asked by the owner → Hunter"), Some(id));
             out(id, true, "hunter", &title)
         }
