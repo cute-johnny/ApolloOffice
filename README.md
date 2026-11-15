@@ -110,6 +110,13 @@ work to the right worker; after that the office carries on by itself.
 If something is unclear, for example which repository you mean, the front desk
 asks before it starts anything. Hover any worker to read what it does.
 
+On the office floor the front desk is the big boss in the black suit at the
+entrance on the right. Click him to open the chat; he types while he works on
+an answer. Be careful what you ask him: one message can start work for Vet,
+Repro, Fixer and Hunter at once and use their models' budget, so name the
+repository and say exactly what you want. The chat repeats this warning at the
+top.
+
 ## Report failed CI runs
 
 Add a workflow that sends failed runs of your CI on the default branch to the
