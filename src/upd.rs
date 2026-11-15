@@ -21,6 +21,11 @@ pub fn asset() -> &'static str {
     }
 }
 
+/// Release file name for version `v` on this system, e.g. `apollo-office-0.11.1-windows-x64.exe`.
+pub fn named(v: &str) -> String {
+    asset().replacen("apollo-office-", &format!("apollo-office-{}-", v.trim().trim_start_matches('v')), 1)
+}
+
 static CK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 pub fn newer(a: &str, b: &str) -> bool {
@@ -93,8 +98,9 @@ pub async fn check(a: &Ax) -> Result<Value, String> {
         if !newer(&v, crate::app::V) {
             return Ok(json!({"latest": v, "new": false}));
         }
-        let want = m["files"][asset()].as_str().ok_or("no build for this system in the release")?.to_string();
-        let bin = get(a, &format!("{b}/{}", asset())).await?;
+        let nm = named(&v);
+        let want = m["files"][nm.as_str()].as_str().ok_or("no build for this system in the release")?.to_string();
+        let bin = get(a, &format!("{b}/{nm}")).await?;
         if hex::encode(Sha256::digest(&bin)) != want {
             return Err("downloaded update does not match the signed checksum".into());
         }
@@ -219,6 +225,13 @@ pub fn cleanup(me: &Path) {
 mod t {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
+
+    #[test]
+    fn versioned_names() {
+        let n = named("v0.11.1");
+        assert!(n.starts_with("apollo-office-0.11.1-"), "{n}");
+        assert_eq!(n.replacen("0.11.1-", "", 1), asset());
+    }
 
     #[test]
     fn versions() {
