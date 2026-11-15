@@ -15,12 +15,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, name: apollo-office-windows-x64.exe }
-          - { os: windows-latest, target: aarch64-pc-windows-msvc, name: apollo-office-windows-arm64.exe }
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, name: apollo-office-linux-x64 }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, name: apollo-office-linux-arm64, cross: true }
-          - { os: macos-latest, target: aarch64-apple-darwin, name: apollo-office-macos-arm64 }
-          - { os: macos-latest, target: x86_64-apple-darwin, name: apollo-office-macos-x64 }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, name: windows-x64.exe }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc, name: windows-arm64.exe }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, name: linux-x64 }
+          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, name: linux-arm64, cross: true }
+          - { os: macos-latest, target: aarch64-apple-darwin, name: macos-arm64 }
+          - { os: macos-latest, target: x86_64-apple-darwin, name: macos-x64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -41,10 +41,10 @@ jobs:
         run: |
           f=target/${{ matrix.target }}/release/apollo-office
           [ -f "$f.exe" ] && f="$f.exe"
-          cp "$f" "${{ matrix.name }}"
+          cp "$f" "apollo-office-${GITHUB_REF_NAME#v}-${{ matrix.name }}"
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          files: ${{ matrix.name }}
+          files: apollo-office-*
           prerelease: ${{ contains(github.ref_name, '-') }}
 
 
