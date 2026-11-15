@@ -128,7 +128,7 @@ jobs:
     permissions:
       actions: read
     steps:
-      - uses: Silvertree2010/ApolloOffice/report@main
+      - uses: cute-johnny/ApolloOfficeImproved/report@main
         with:
           url: ${{ secrets.APOLLO_OFFICE_URL }}
           token: ${{ secrets.APOLLO_OFFICE_TOKEN }}
