@@ -4,6 +4,7 @@ use crate::db::{now, Job};
 use crate::net::need;
 use crate::pa;
 use crate::sh::{gh, ghj, hb, hbid, ho, hosts, hx, hxl, q, Out};
+use base64::Engine;
 use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -197,14 +198,16 @@ fn bslug(j: &Job) -> String {
     let t: String = j.title.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
     let t: String = t.split('-').filter(|x| !x.is_empty()).collect::<Vec<_>>().join("-").chars().take(32).collect();
     let t = t.trim_end_matches('-');
-    if j.hunt() || j.num == 0 {
-        format!("fix/h{}-{t}", j.id)
-    } else {
-        format!("fix/{}-{t}", j.num)
+    match j.kind.as_str() {
+        "design_fix" => format!("design/j{}-{t}", j.id),
+        "test_app" => format!("test/j{}-{t}", j.id),
+        "build" => format!("build/p{}-m{}-{t}", j.project_id.unwrap_or(0), j.milestone_idx),
+        _ if j.hunt() || j.num == 0 => format!("fix/h{}-{t}", j.id),
+        _ => format!("fix/{}-{t}", j.num),
     }
 }
 
-const ART: &[&str] = &[".venv-bootstrap/", ".venv/", "venv/", "__pycache__/", "*.pyc", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".tox/", ".coverage", "node_modules/", ".next/", ".turbo/", "target/", ".gradle/"];
+const ART: &[&str] = &[".venv-bootstrap/", ".venv/", "venv/", "__pycache__/", "*.pyc", ".pytest_cache/", ".mypy_cache/", ".ruff_cache/", ".tox/", ".coverage", "node_modules/", ".next/", ".turbo/", "target/", ".gradle/", ".apollo/artifacts/"];
 
 async fn prep(a: &Ax, j: &mut Job) -> R<()> {
     need(a, "repro", &[&j.h(), "gh"]).await?;
@@ -250,10 +253,19 @@ async fn prep(a: &Ax, j: &mut Job) -> R<()> {
     ok(a, j, &format!("mkdir -p .git/info && printf '%s\\n' {} > .git/info/exclude", ART.iter().map(|x| q(x)).collect::<Vec<_>>().join(" ")), 60).await?;
     let me = crate::gh::me(a).await.map_err(X::E)?;
     ok(a, j, &format!("git config user.name {} && git config user.email {}", q(me["name"].as_str().unwrap_or("")), q(me["mail"].as_str().unwrap_or(""))), 60).await?;
-    let br = if j.kind == "fix" || j.kind == "hunt" { bslug(j) } else { j.s("branch") };
-    if j.kind == "fix" || j.kind == "hunt" {
-        let at = j.s("at");
-        ok(a, j, &format!("git checkout -q -B {} {}", q(&br), if at.is_empty() { format!("origin/{}", q(&mn)) } else { q(&at) }), 1800).await?;
+    let new_branch = matches!(j.kind.as_str(), "fix" | "hunt" | "design_fix" | "test_app" | "build");
+    let br = if new_branch { bslug(j) } else { j.s("branch") };
+    if new_branch {
+        let at = if !j.parent_branch.is_empty() && j.kind == "build" {
+            j.parent_branch.clone()
+        } else {
+            j.s("at")
+        };
+        if !j.parent_branch.is_empty() && j.kind == "build" {
+            pull(a, j, &url, &j.parent_branch, &format!("refs/remotes/origin/{}", j.parent_branch)).await.ok();
+        }
+        let base_ref = if at.is_empty() { format!("origin/{}", q(&mn)) } else if at == j.parent_branch { format!("origin/{}", q(&at)) } else { q(&at) };
+        ok(a, j, &format!("git checkout -q -B {} {base_ref}", q(&br)), 1800).await?;
     } else {
         let src = format!("{}{}.git", gitb(), j.s("head"));
         pull(a, j, &src, &br, "refs/ao/head").await?;
@@ -562,7 +574,12 @@ async fn ci0(a: &Ax, j: &mut Job) -> R<String> {
     a.db.jset(j.id, &[("st", json!("ci"))]);
     a.st("ci", "work", Some(j.id), "");
     a.flow("fixer", "ci", &j.tag());
-    let c = rp(a, &j.repo)["ci"].as_str().unwrap_or("").to_string();
+    let c = rp(a, &j.repo)["ci"].as_str().unwrap_or("").trim().to_string();
+    if c.is_empty() {
+        a.st("ci", "idle", None, "ok");
+        a.say("ci", "skipped (no CI command configured yet)", Some(j.id));
+        return Ok(String::new());
+    }
     j.d["known"] = json!([]);
     let mut ie = 0;
     let mut it = false;
@@ -1063,7 +1080,7 @@ async fn gate(a: &Ax, j: &mut Job) -> R<()> {
     a.st("submit", "work", Some(j.id), "");
     a.say("submit", &format!("pre-push gate for {}", j.tag()), Some(j.id));
     need(a, "submit", &["gh", &j.h()]).await?;
-    if j.kind != "fix" {
+    if j.kind == "rebase" || j.kind == "review" {
         let p = ghj(&["pr", "view", &j.pr.unwrap_or(0).to_string(), "-R", &j.repo, "--json", "state"], 60).await.map_err(X::E)?;
         if p["state"] != "OPEN" {
             return drop("PR is no longer open");
@@ -1081,8 +1098,12 @@ async fn gate(a: &Ax, j: &mut Job) -> R<()> {
         }
     }
     if nb == j.s("base") {
-        let result=crate::quality::check(a,j).await?;
-        if !result.is_empty() { return drop(result); }
+        if j.kind == "fix" {
+            let result = crate::quality::check(a, j).await?;
+            if !result.is_empty() {
+                return drop(result);
+            }
+        }
         a.say("submit", "default branch unchanged, proofs still valid", Some(j.id));
         return Ok(());
     }
@@ -1096,10 +1117,12 @@ async fn gate(a: &Ax, j: &mut Job) -> R<()> {
     j.d["base"] = json!(nb);
     a.db.jd(j);
     let f = j.d["f"].clone();
-    let v = verify(a, j, &f).await?;
-    if !v.is_empty() {
-        j.d["base"] = json!(ob);
-        return drop(format!("after rebase: {}", v.lines().next().unwrap_or("")));
+    if j.kind == "fix" {
+        let v = verify(a, j, &f).await?;
+        if !v.is_empty() {
+            j.d["base"] = json!(ob);
+            return drop(format!("after rebase: {}", v.lines().next().unwrap_or("")));
+        }
     }
     let c = ci(a, j).await?;
     if !c.is_empty() {
@@ -1402,6 +1425,166 @@ async fn resume(a: &Ax, j: &mut Job) -> R<Value> {
     Ok(f)
 }
 
+async fn sync_artifacts(a: &Ax, j: &mut Job) -> Vec<String> {
+    let ls = x(a, j, "ls -1 .apollo/artifacts 2>/dev/null | grep -E '\\.png$' | head -12 || true", 30).await;
+    let mut saved: Vec<String> = j.d["artifacts"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+    for raw in ls.o.lines().map(str::trim).filter(|s| !s.is_empty()) {
+        let Some(dst) = crate::web::safe_artifact_path(&a.dd, j.id, raw) else { continue };
+        let rel = format!(".apollo/artifacts/{raw}");
+        let sz = x(a, j, &format!("wc -c < {} 2>/dev/null || echo 0", q(&rel)), 30).await.o.trim().parse::<u64>().unwrap_or(0);
+        if sz == 0 || sz > 4 * 1024 * 1024 {
+            continue;
+        }
+        let b64 = x(a, j, &format!("(base64 -w0 < {p} 2>/dev/null || base64 < {p})", p = q(&rel)), 60).await;
+        if b64.c != 0 {
+            continue;
+        }
+        let clean_b64: String = b64.o.split_whitespace().collect();
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(&clean_b64) {
+            if let Some(parent) = dst.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if std::fs::write(&dst, bytes).is_ok() && !saved.iter().any(|x| x == raw) {
+                saved.push(raw.to_string());
+            }
+        }
+    }
+    if !saved.is_empty() {
+        j.d["artifacts"] = json!(saved.clone());
+        a.db.jd(j);
+    }
+    saved
+}
+
+pub(crate) async fn has_ui_surface(a: &Ax, j: &Job) -> bool {
+    let out = x(a, j, &format!("(git diff --name-only {}..HEAD 2>/dev/null; git ls-files 2>/dev/null | head -200) | grep -E '\\.(html|css|scss|jsx|tsx|vue|svelte)$|^(ui|web|frontend|client)/' | head -5 || true", q(&j.s("base"))), 30).await;
+    !out.o.trim().is_empty()
+}
+
+pub(crate) async fn design_fix_stage(a: &Ax, j: &mut Job, standalone: bool) -> R<String> {
+    if !standalone && !has_ui_surface(a, j).await {
+        return Ok(String::new());
+    }
+    a.db.jset(j.id, &[("st", json!("design"))]);
+    a.st("design_fixer", "work", Some(j.id), "");
+    a.flow("fixer", "design_fixer", &j.tag());
+    let md = a.md("design_fixer");
+    use_(a, j, &md);
+    a.say("design_fixer", &format!("inspecting and polishing UI on {}", j.tag()), Some(j.id));
+    let prompt = format!(
+        "Repository: {}. Branch {} (base {}).\nGoal / context:\n{}\n{}{}\nInspect the live UI via Chromium (`inspect_page`), capture before & after screenshots in `.apollo/artifacts/`, fix visual/layout/responsive issues cleanly, stop background servers before finishing, commit edits cleanly, and reply with strict JSON.",
+        j.repo,
+        j.s("br"),
+        j.s("base"),
+        wrap("issue", &format!("{}\n\n{}", j.title, crate::sh::head(&j.s("body"), 8000))),
+        rules(a, j),
+        answers_context(j),
+    );
+    let mut o = Ask::new("design_fixer", md, P("design_fixer"), prompt);
+    o.job = Some(j.id);
+    o.rn = rn(a, j);
+    o.turns = 60;
+    o.ef = Some("medium");
+    o.t = 90 * 60;
+    let res = ask(a, o).await;
+    let (_, js) = match res {
+        Ok(v) => v,
+        Err(X::NeedUser(q)) => {
+            sync_artifacts(a, j).await;
+            return Err(X::NeedUser(q));
+        }
+        Err(e) => {
+            a.st("design_fixer", "idle", None, "sad");
+            return Err(e);
+        }
+    };
+    let _ = x(a, j, "pkill -f \"127\\.0\\.0\\.1:\" 2>/dev/null; true", 30).await;
+    sync_artifacts(a, j).await;
+    let dt = ok(a, j, "git status --porcelain", 60).await.unwrap_or_default();
+    if !dt.trim().is_empty() {
+        let _ = x(a, j, &format!("git add -A && git commit -qm {}", q("design: polish UI/UX layout")), 60).await;
+    }
+    j.d["design"] = js.clone();
+    a.db.jd(j);
+    let skipped = js["skipped"].as_bool().unwrap_or(false);
+    let okk = js["ok"].as_bool().unwrap_or(false) || skipped;
+    a.st("design_fixer", "idle", None, if okk { "ok" } else { "sad" });
+    if !okk {
+        let msg = js["issues"].to_string();
+        a.say("design_fixer", &format!("visual issues found: {}", crate::sh::head(&msg, 180)), Some(j.id));
+        if standalone {
+            return drop(format!("Design Fixer could not resolve visual issues: {}", crate::sh::head(&msg, 220)));
+        }
+        return Ok(format!("Design Fixer issues:\n{msg}"));
+    }
+    a.say("design_fixer", js["summary"].as_str().unwrap_or("UI inspected and polished"), Some(j.id));
+    Ok(String::new())
+}
+
+pub(crate) async fn tester_stage(a: &Ax, j: &mut Job, standalone: bool) -> R<Value> {
+    a.db.jset(j.id, &[("st", json!("test"))]);
+    a.st("tester", "work", Some(j.id), "");
+    a.flow("design_fixer", "tester", &j.tag());
+    let md = a.md("tester");
+    use_(a, j, &md);
+    a.say("tester", &format!("testing live application end-to-end on {}", j.tag()), Some(j.id));
+    let mode_note = if standalone {
+        "Standalone QA & E2E request: boot the app on 127.0.0.1, test all real user flows (and write/commit repeatable E2E tests if appropriate), stop background servers cleanly before returning JSON."
+    } else {
+        "Pipeline verification: boot the app on 127.0.0.1, run real user flows via inspect_page / curl / CLI, report bugs in `bugs_found`, do NOT modify tracked source files here, stop background servers cleanly before returning JSON."
+    };
+    let prompt = format!(
+        "Repository: {}. Branch {} (base {}).\n{}\n{}\n{}{}\nReturn strict JSON.",
+        j.repo,
+        j.s("br"),
+        j.s("base"),
+        mode_note,
+        wrap("issue", &format!("{}\n\n{}", j.title, crate::sh::head(&j.s("body"), 8000))),
+        rules(a, j),
+        answers_context(j),
+    );
+    let mut o = Ask::new("tester", md, P("tester"), prompt);
+    o.job = Some(j.id);
+    o.rn = rn(a, j);
+    o.turns = 60;
+    o.ef = Some("medium");
+    o.t = 90 * 60;
+    let res = ask(a, o).await;
+    let _ = x(a, j, "pkill -f \"127\\.0\\.0\\.1:\" 2>/dev/null; true", 30).await;
+    let (_, js) = match res {
+        Ok(v) => v,
+        Err(X::NeedUser(q)) => {
+            sync_artifacts(a, j).await;
+            return Err(X::NeedUser(q));
+        }
+        Err(e) => {
+            a.st("tester", "idle", None, "sad");
+            return Err(e);
+        }
+    };
+    sync_artifacts(a, j).await;
+    if !standalone {
+        let _ = x(a, j, "git checkout -q -- . 2>/dev/null; git clean -fdq 2>/dev/null; true", 60).await;
+    } else {
+        let dt = ok(a, j, "git status --porcelain", 60).await.unwrap_or_default();
+        if !dt.trim().is_empty() {
+            let _ = x(a, j, &format!("git add -A && git commit -qm {}", q("test: add E2E verification tests")), 60).await;
+        }
+    }
+    j.d["test_report"] = js.clone();
+    a.db.jd(j);
+    let okk = js["ok"].as_bool().unwrap_or(false);
+    a.st("tester", "idle", None, if okk { "ok" } else { "sad" });
+    a.say("tester", js["summary"].as_str().unwrap_or(if okk { "E2E verification passed" } else { "E2E bugs found" }), Some(j.id));
+    Ok(js)
+}
+
 fn idle_all(a: &Ax, id: i64) {
     for w in ["architect", "repro", "fixer", "design_fixer", "tester", "ci", "reviewer", "submit", "hunter"] {
         let b = a.lv.lock().unwrap().w.get(w).map(|x| x.job == Some(id)).unwrap_or(false);
@@ -1519,6 +1702,67 @@ async fn go(a: &Ax, id: i64, h: &str) {
                 })
                 .await
                 .map(|x| jj = x)?;
+            } else if j.kind == "design_fix" {
+                let mut k = jj.clone();
+                let dfb = design_fix_stage(a, &mut k, true).await?;
+                if !dfb.is_empty() {
+                    return drop(dfb);
+                }
+                let ci_res = ci(a, &mut k).await?;
+                if !ci_res.is_empty() {
+                    return drop(format!("CI failed after design fix: {}", crate::sh::head(&ci_res, 220)));
+                }
+                let ds = &k.d["design"];
+                let summary = ds["summary"].as_str().unwrap_or("Polished UI layout and responsiveness").to_string();
+                let mut f = json!({
+                    "title": format!("Design: {}", crate::sh::head(&k.title, 60)),
+                    "cause": "Visual/UX polish and responsive inspection requested.",
+                    "fix": summary,
+                    "untouched": "Core backend logic",
+                    "tests": ["Visual inspection in Chromium (1280x800 & 390x844)"],
+                    "test_cmd": "inspect_page",
+                });
+                let rfb = review(a, &mut k, &mut f).await?;
+                if !rfb.is_empty() {
+                    return drop(format!("Reviewer rejected design fix: {}", crate::sh::head(&rfb, 220)));
+                }
+                k.d["f"] = f;
+                a.db.jd(&k);
+                jj = k;
+            } else if j.kind == "test_app" {
+                let mut k = jj.clone();
+                let tr = tester_stage(a, &mut k, true).await?;
+                let commits: i64 = ok(a, &k, &format!("git rev-list --count {}..HEAD", k.s("base")), 60).await.unwrap_or_default().parse().unwrap_or(0);
+                if commits > 0 {
+                    let ci_res = ci(a, &mut k).await?;
+                    if !ci_res.is_empty() {
+                        return drop(format!("CI failed after adding E2E tests: {}", crate::sh::head(&ci_res, 220)));
+                    }
+                    let summary = tr["summary"].as_str().unwrap_or("Added E2E verification tests").to_string();
+                    let mut f = json!({
+                        "title": format!("Test: {}", crate::sh::head(&k.title, 60)),
+                        "cause": "End-to-end verification and test coverage requested.",
+                        "fix": summary,
+                        "untouched": "Application production code",
+                        "tests": tr["flows_tested"],
+                        "test_cmd": tr["test_cmd"].as_str().unwrap_or("E2E suite"),
+                    });
+                    let rfb = review(a, &mut k, &mut f).await?;
+                    if !rfb.is_empty() {
+                        return drop(format!("Reviewer rejected test suite: {}", crate::sh::head(&rfb, 220)));
+                    }
+                    k.d["f"] = f;
+                    a.db.jd(&k);
+                    jj = k;
+                } else {
+                    let flows = tr["flows_tested"].as_array().map(|x| x.len()).unwrap_or(0);
+                    let bugs = tr["bugs_found"].as_array().map(|x| x.len()).unwrap_or(0);
+                    let sum = tr["summary"].as_str().unwrap_or("Application E2E audit finished");
+                    let why = format!("QA complete ({flows} flows, {bugs} bug(s)): {}", crate::sh::head(sum, 160));
+                    a.db.jset(id, &[("st", json!("done")), ("why", json!(why))]);
+                    clean(a, &k).await;
+                    return Err(X::Back(String::new()));
+                }
             } else {
                 stage(a, "fixer", || {
                     let mut k = jj.clone();
@@ -1641,7 +1885,7 @@ async fn go(a: &Ax, id: i64, h: &str) {
 }
 
 pub fn recover(a: &Ax) {
-    for j in a.db.all("select id, st, kind, d from jobs where st in ('repro','fix','ci','review','gate','hunt','submit')", pa![]) {
+    for j in a.db.all("select id, st, kind, d from jobs where st in ('repro','fix','ci','design','test','review','gate','hunt','submit')", pa![]) {
         let id = j["id"].as_i64().unwrap_or(0);
         let mut d = j["d"].clone();
         let st = j["st"].as_str().unwrap_or("");
@@ -1736,7 +1980,8 @@ async fn pick(a: &Ax, h: &str) -> Option<i64> {
         if rr["on_"].as_i64().unwrap_or(0) != 1 && !pin {
             continue;
         }
-        if rr["ci"].as_str().unwrap_or("").trim().is_empty() && !pin {
+        let kind_s = j["kind"].as_str().unwrap_or("");
+        if rr["ci"].as_str().unwrap_or("").trim().is_empty() && !pin && !matches!(kind_s, "design_fix" | "test_app" | "architect") {
             continue;
         }
         if !pin && red(a, &r, h).await {

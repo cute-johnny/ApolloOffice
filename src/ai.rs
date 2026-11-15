@@ -455,14 +455,50 @@ fn unthink(t: &str) -> String {
     regex::Regex::new(r"(?s)<think>.*?</think>").unwrap().replace_all(t, "").trim().to_string()
 }
 
+pub fn supports_vision(a: &Ax, md: &str) -> bool {
+    if let Some(b) = a.set()["vision"][md].as_bool() {
+        return b;
+    }
+    let (id, m) = crate::prov::parse(md);
+    let ml = m.to_lowercase();
+    match id {
+        "anthropic" | "cc" | "openai" | "codex" | "gemini" => true,
+        "ollama" => ["llava", "bakllava", "minicpm", "-vl", "vision", "gemma3", "pixtral", "mistral-small"]
+            .iter()
+            .any(|k| ml.contains(k)),
+        "opencode" | "groq" | "nvidia" | "mistral" => ["-vl", "vision", "pixtral", "gemma-3", "llama-4"]
+            .iter()
+            .any(|k| ml.contains(k)),
+        _ => false,
+    }
+}
+
 // Preserve the tool-call/result protocol and latest observation while reducing
 // old observations. The code lives on the worker and can be read again by range.
 fn compact_tool_history(messages: &mut [Value]) {
-    let latest=messages.iter().rposition(|m|m["role"]=="assistant");
-    for (index,message) in messages.iter_mut().enumerate() {
-        if message["role"]=="tool" && latest.map(|at|index<at).unwrap_or(false) {
-            if let Some(text)=message["content"].as_str() {
-                if text.len()>1024 { message["content"]=json!(format!("{}\n[Older output truncated; read targeted file ranges if needed.]",crate::sh::head(text,1024))); }
+    let latest = messages.iter().rposition(|m| m["role"] == "assistant");
+    for (index, message) in messages.iter_mut().enumerate() {
+        let is_older = latest.map(|at| index < at).unwrap_or(false);
+        if !is_older {
+            continue;
+        }
+        if message["role"] == "tool" {
+            if let Some(text) = message["content"].as_str() {
+                if text.len() > 1024 {
+                    message["content"] = json!(format!(
+                        "{}\n[Older output truncated; read targeted file ranges if needed.]",
+                        crate::sh::head(text, 1024)
+                    ));
+                }
+            }
+        } else if message["role"] == "user" {
+            if message.get("images").is_some() {
+                message.as_object_mut().map(|o| o.remove("images"));
+            }
+            if let Some(arr) = message["content"].as_array() {
+                if arr.iter().any(|p| p["type"] == "image_url" || p["type"] == "image") {
+                    message["content"] = json!("[Earlier screenshot omitted to save context.]");
+                }
             }
         }
     }
@@ -549,13 +585,28 @@ async fn api(a: &Ax, o: Ask) -> R<(String, Value)> {
                     return Ok(txt);
                 }
                 ms.push(json!({"role": "assistant", "content": ct}));
+                let vis = supports_vision(a, &o.md);
                 let mut rs = vec![];
                 for x in uses {
-                    let (t, e) = match tool(x["name"].as_str().unwrap_or("").to_string(), x["input"].clone()).await {
-                        Ok(t) => (t, false),
-                        Err(e) => (format!("error: {e}"), true),
+                    let (content, e) = match tool(x["name"].as_str().unwrap_or("").to_string(), x["input"].clone()).await {
+                        Ok(out) => {
+                            let mut txt = crate::sh::clip(&out.text, result_limit);
+                            if !out.images.is_empty() && vis {
+                                let mut blocks = vec![json!({"type": "text", "text": txt})];
+                                for img in out.images {
+                                    blocks.push(json!({"type": "image", "source": {"type": "base64", "media_type": img.mime, "data": img.data_b64}}));
+                                }
+                                (json!(blocks), false)
+                            } else {
+                                if !out.images.is_empty() {
+                                    txt.push_str("\n[Screenshot saved to .apollo/artifacts/, but this model is text-only; rely on layout/CSS/console metrics above.]");
+                                }
+                                (json!(txt), false)
+                            }
+                        }
+                        Err(e) => (json!(format!("error: {e}")), true),
                     };
-                    rs.push(json!({"type": "tool_result", "tool_use_id": x["id"], "content": crate::sh::clip(&t, result_limit), "is_error": e}));
+                    rs.push(json!({"type": "tool_result", "tool_use_id": x["id"], "content": content, "is_error": e}));
                 }
                 if let Some(q) = o.rn.as_ref().and_then(|r| r.ask_q.as_ref()).and_then(|m| m.lock().unwrap().clone()) {
                     return Err(X::NeedUser(q));
@@ -619,6 +670,8 @@ async fn api(a: &Ax, o: Ask) -> R<(String, Value)> {
                     am["reasoning_content"] = rc.clone();
                 }
                 ms.push(am);
+                let vis = supports_vision(a, &o.md);
+                let mut turn_images = vec![];
                 for c in calls {
                     let g: Value = match &c["function"]["arguments"] {
                         Value::String(s) => serde_json::from_str(s).unwrap_or(json!({})),
@@ -626,11 +679,35 @@ async fn api(a: &Ax, o: Ask) -> R<(String, Value)> {
                         _ => json!({}),
                     };
                     let n = c["function"]["name"].as_str().unwrap_or("").to_string();
-                    let t = tool(n.clone(), g).await.unwrap_or_else(|e| format!("error: {e}"));
+                    let t = match tool(n.clone(), g).await {
+                        Ok(out) => {
+                            let mut txt = out.text;
+                            if !out.images.is_empty() {
+                                if vis {
+                                    turn_images.extend(out.images);
+                                } else {
+                                    txt.push_str("\n[Screenshot saved to .apollo/artifacts/, but this model is text-only; rely on layout/CSS/console metrics above.]");
+                                }
+                            }
+                            txt
+                        }
+                        Err(e) => format!("error: {e}"),
+                    };
                     ms.push(if ol { json!({"role": "tool", "tool_name": n, "content": crate::sh::clip(&t, result_limit)}) } else { json!({"role": "tool", "tool_call_id": c["id"], "content": crate::sh::clip(&t, result_limit)}) });
                 }
                 if let Some(q) = o.rn.as_ref().and_then(|r| r.ask_q.as_ref()).and_then(|m| m.lock().unwrap().clone()) {
                     return Err(X::NeedUser(q));
+                }
+                if !turn_images.is_empty() {
+                    if ol {
+                        ms.push(json!({"role": "user", "content": "Visual screenshot(s) from the tool above. Inspect layout, alignment, contrast, and broken UI:", "images": turn_images.iter().map(|i| i.data_b64.clone()).collect::<Vec<_>>()}));
+                    } else {
+                        let mut parts = vec![json!({"type": "text", "text": "Visual screenshot(s) from the tool above. Inspect layout, alignment, contrast, and broken UI:"})];
+                        for img in turn_images {
+                            parts.push(json!({"type": "image_url", "image_url": {"url": format!("data:{};base64,{}", img.mime, img.data_b64)}}));
+                        }
+                        ms.push(json!({"role": "user", "content": parts}));
+                    }
                 }
             }
         }
@@ -758,9 +835,32 @@ mod t {
 
     #[test]
     fn prompts() {
-        for n in ["guard", "scout", "vet", "twin", "repro", "fixer", "reviewer", "hunter", "watcher", "rebase", "rebrev", "desc"] {
+        for n in ["guard", "scout", "vet", "twin", "repro", "fixer", "design_fixer", "tester", "reviewer", "hunter", "watcher", "rebase", "rebrev", "desc", "desk"] {
             assert!(!p(n).is_empty(), "{n}");
         }
+    }
+
+    #[test]
+    fn supports_vision_and_compact_tool_history_behave_safely() {
+        let db = crate::db::Db::mem();
+        db.ks("set", &json!({"vision": {"ollama:custom-vl": true}}));
+        let a = std::sync::Arc::new(crate::app::App::new(db, std::env::temp_dir(), 1, "x".into()));
+        assert!(supports_vision(&a, "anthropic:claude-sonnet-5-5"));
+        assert!(supports_vision(&a, "openai:gpt-5.5"));
+        assert!(supports_vision(&a, "gemini:gemini-2.5-flash"));
+        assert!(!supports_vision(&a, "ollama:qwen3:14b"));
+        assert!(supports_vision(&a, "ollama:qwen2.5-vl:7b"));
+        assert!(supports_vision(&a, "ollama:custom-vl"));
+
+        let mut msgs = vec![
+            json!({"role": "system", "content": "sys"}),
+            json!({"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,AAA"}}]}),
+            json!({"role": "assistant", "content": "ok"}),
+            json!({"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,BBB"}}]}),
+        ];
+        compact_tool_history(&mut msgs);
+        assert_eq!(msgs[1]["content"], json!("[Earlier screenshot omitted to save context.]"));
+        assert!(msgs[3]["content"].is_array());
     }
 }
 
