@@ -7,8 +7,8 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const PUB: &str = "8805f9e4f9667145fafb91f0c685480f0fb7cfc9444dd38cdf7cdb1770a74e16";
-const BASE: &str = "https://github.com/Silvertree2010/ApolloOffice/releases/latest/download";
+pub const PUB: &str = "b13c42059ba8b2e2265556b9495d46ace43ba9991a7d52c40f9c6f75511537cb";
+const BASE: &str = "https://github.com/cute-johnny/ApolloOfficeImproved/releases/latest/download";
 
 pub fn asset() -> &'static str {
     match (std::env::consts::OS, std::env::consts::ARCH) {
