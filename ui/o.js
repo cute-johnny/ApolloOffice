@@ -465,7 +465,7 @@
   };
   const hm = (t) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   const kt = (n) => (n > 999999 ? (n / 1e6).toFixed(1) + "M" : n > 999 ? Math.round(n / 1000) + "k" : String(n));
-  const STC = { approve: "ok", ready: "", vet: "", repro: "work", fix: "work", ci: "work", review: "work", gate: "work", submit: "work", done: "ok", drop: "bad" };
+  const STC = { approve: "ok", need_user: "warn", ready: "", vet: "", repro: "work", fix: "work", design: "work", test: "work", ci: "work", review: "work", gate: "work", submit: "work", done: "ok", drop: "bad" };
 
   const GEAR = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M9.4 1l.3 1.8c.4.1.8.3 1.1.5l1.5-1 1.4 1.4-1 1.5c.2.3.4.7.5 1.1L15 6.6v2l-1.8.3c-.1.4-.3.8-.5 1.1l1 1.5-1.4 1.4-1.5-1c-.3.2-.7.4-1.1.5L9.4 15h-2l-.3-1.8c-.4-.1-.8-.3-1.1-.5l-1.5 1-1.4-1.4 1-1.5c-.2-.3-.4-.7-.5-1.1L1.8 8.6v-2l1.8-.3c.1-.4.3-.8.5-1.1l-1-1.5 1.4-1.4 1.5 1c.3-.2.7-.4 1.1-.5L7.4 1h2zM8.4 5.6a2 2 0 100 4 2 2 0 000-4z"/></svg>`;
   window.AO.GEAR = GEAR;
@@ -510,7 +510,7 @@
 
   const rn = (j) => (j.repo.split("/")[1] || j.repo) + (j.num ? "#" + j.num : "");
   const sel = new Set();
-  const jrow = (j, x) => `<div class="row${j.st === "approve" ? " apr" : ""}">${j.st === "approve" && x ? `<input type="checkbox" class="bk" data-k="${j.id}" ${sel.has(j.id) ? "checked" : ""} aria-label="select">` : ""}<span class="pill ${STC[j.st] || ""}">${esc(j.kind !== "fix" ? j.kind + "·" + j.st : j.st)}</span><div class="ti"><a class="a" href="#" data-j="${j.id}">${esc(j.title)}</a><div class="w">${esc(j.st === "ci" && S.cil[j.id] ? S.cil[j.id] : j.why || "")}</div></div><span class="rp">${esc(rn(j))}${j.st === "approve" ? ` <button class="go" data-j="${j.id}">review</button>` : ""}${x && j.st !== "approve" ? ` <button class="x" data-d="${j.id}" title="drop">✕</button>` : ""}${!x && j.st === "drop" && j.kind === "fix" ? ` <button class="x" data-rq="${j.id}" title="try again">↻</button>` : ""}</span></div>`;
+  const jrow = (j, x) => `<div class="row${j.st === "approve" ? " apr" : ""}">${j.st === "approve" && x ? `<input type="checkbox" class="bk" data-k="${j.id}" ${sel.has(j.id) ? "checked" : ""} aria-label="select">` : ""}<span class="pill ${STC[j.st] || ""}">${esc(j.kind !== "fix" ? j.kind + "·" + j.st : j.st)}</span><div class="ti"><a class="a" href="#" data-j="${j.id}">${esc(j.title)}</a><div class="w">${esc(j.st === "ci" && S.cil[j.id] ? S.cil[j.id] : j.why || "")}</div></div><span class="rp">${esc(rn(j))}${j.st === "approve" ? ` <button class="go" data-j="${j.id}">review</button>` : ""}${j.st === "need_user" ? ` <button class="go" data-j="${j.id}">reply</button>` : ""}${x && j.st !== "approve" ? ` <button class="x" data-d="${j.id}" title="drop">✕</button>` : ""}${!x && j.st === "drop" && ["fix", "build", "design_fix", "test_app"].includes(j.kind) ? ` <button class="x" data-rq="${j.id}" title="try again">↻</button>` : ""}</span></div>`;
 
   let lW = "", lQ = "", lWrap = false, lastLog = "";
   try { lWrap = localStorage.getItem("ao.lw") === "1"; } catch {}
@@ -587,7 +587,7 @@
     }
     seen = ids;
   };
-  const apply = (s) => { if (!s || s.error) return; nt(s); S = s; last = performance.now(); err = 0; tiles(); lists(); chips(); tip(); window.AO.S = s; window.AO.onState && window.AO.onState(s); };
+  const apply = (s) => { if (!s || s.error) return; nt(s); S = s; last = performance.now(); err = 0; tiles(); lists(); chips(); tip(); window.AO.S = s; window.AO.onState && window.AO.onState(s); window.AO.onNeed && window.AO.onNeed(s); };
   window.AO.apply = apply;
 
   document.addEventListener("change", (e) => {

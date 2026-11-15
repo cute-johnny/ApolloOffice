@@ -15,7 +15,7 @@
     "Search for bugs nobody has reported yet",
   ];
   const el = $("chat"), log = $("chL"), inp = $("chI"), send = $("chS");
-  const att = $("chAtt"), attT = $("chAttT"), attX = $("chAttX"), fileIn = $("chFile"), upBtn = $("chUp");
+  const needEl = $("chNeed"), att = $("chAtt"), attT = $("chAttT"), attX = $("chAttX"), fileIn = $("chFile"), upBtn = $("chUp");
   let msgs = [], draftId = localStorage.getItem(DKEY) || "", pendingSpec = null, busy = false;
   try { msgs = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch {}
   if (!Array.isArray(msgs)) msgs = [];
@@ -74,11 +74,25 @@
   const intro = () => `<div class="ci"><b>Tell the office what you need.</b><p>Ask for a brand new app (even in plain everyday words or a huge Markdown spec), report a bug, request UI design fixes, or ask Tester to verify your app.</p>${A.S && !A.S.nr ? `<p class="hint">Tip: no repo is added yet — you can add one under Repos or ask Front Desk to create a new private repo when starting a new app.</p>` : ""}<div class="cx">${EX.map((x) => `<button type="button">${esc(x)}</button>`).join("")}</div></div>`;
   // The plan card names the workers and the cost; the banner only reminds.
   $("chW").textContent = "He manages the whole office: clarifies vague requests, handles huge specs, and hands plans to Architect, Design Fixer, Tester & Repro. Nothing starts until Start.";
+  const renderNeed = () => {
+    if (!needEl) return;
+    const wait = (A.S?.q || []).filter((j) => j.st === "need_user");
+    if (!wait.length) { needEl.hidden = true; needEl.innerHTML = ""; return; }
+    needEl.hidden = false;
+    needEl.innerHTML = wait.map((j) => {
+      let qtxt = j.why || "Waiting for your reply";
+      try { const qv = typeof j.question_json === "string" ? JSON.parse(j.question_json) : j.question_json; if (qv?.question) qtxt = qv.question; } catch {}
+      return `<div class="chneed-row"><span><b>Job ${j.id}:</b> ${esc(qtxt)}</span><button type="button" class="go" data-nj="${j.id}">Reply</button></div>`;
+    }).join("");
+  };
+  A.onNeed = renderNeed;
+  if (needEl) needEl.onclick = (e) => { const b = e.target.closest("[data-nj]"); if (b && A.job) A.job(Number(b.dataset.nj)); };
   const draw = () => {
     log.innerHTML = (msgs.length ? msgs.map(bubble).join("") : intro()) + (busy ? `<div class="cm desk wait">The front desk is thinking…</div>` : "");
     log.scrollTop = log.scrollHeight;
     send.disabled = busy;
     A.deskBusy = busy;
+    renderNeed();
   };
 
   // What the model gets back as its own earlier turns: its reply, the jobs

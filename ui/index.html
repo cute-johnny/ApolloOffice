@@ -120,6 +120,13 @@ canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edge
 .pill.ok { color: var(--ok); }
 .pill.bad { color: var(--bad); }
 .pill.info { color: var(--info); }
+.pill.warn { color: #d9b44a; background: color-mix(in srgb, #d9b44a 16%, transparent); border: 1px solid color-mix(in srgb, #d9b44a 45%, transparent); }
+.nqbox { border-color: color-mix(in srgb, #d9b44a 55%, transparent); background: color-mix(in srgb, #d9b44a 8%, var(--g)); }
+.nqch { font: 11px/1.3 var(--m); padding: 4px 8px; border-radius: 999px; background: var(--p); border: 1px solid var(--info); color: var(--info); cursor: pointer; }
+.nqch:hover { background: color-mix(in srgb, var(--info) 16%, transparent); }
+#chat .chneed { display: flex; flex-direction: column; gap: 5px; padding: 7px 10px; border-top: 1px solid color-mix(in srgb, #d9b44a 45%, transparent); background: color-mix(in srgb, #d9b44a 11%, var(--p)); font: 11px/1.35 var(--m); }
+#chat .chneed-row { display: flex; align-items: center; gap: 8px; }
+#chat .chneed-row span { flex: 1; color: var(--t1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ti { overflow: hidden; }
 .ti .a { color: var(--t1); display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ti .w { color: var(--t3); font-size: 11px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -335,6 +342,7 @@ pre.df .ad { color: var(--ok); } pre.df .rm { color: var(--bad); } pre.df .hh { 
   <div class="chh"><h3>Front desk</h3><button id="chG" title="Model and provider for the front desk">Model</button><button id="chN" title="Forget this conversation and start over">New chat</button><button id="chX">Close</button></div>
   <div class="warn cw" id="chW" role="note"></div>
   <div class="chl" id="chL" aria-live="polite"></div>
+  <div id="chNeed" class="chneed" hidden></div>
   <div class="catt" id="chAtt" hidden><b id="chAttT"></b><button type="button" id="chAttX">Remove</button></div>
   <div class="chfoot">
     <form id="chF"><textarea id="chI" placeholder="Describe an app, bug or feature, paste a long spec, or drop a .md/.txt file…" aria-label="Message to the front desk"></textarea><button class="pri" id="chS">Send</button></form>

@@ -533,10 +533,33 @@
       };
       return;
     }
-    B.innerHTML = `<div class="sec"><div class="box"><div class="hd2"><b>${esc(j.title)}</b><span class="pill">${esc(j.st)}</span></div><div class="msg">${esc(j.repo)} ${esc(tag)} · ${esc(j.kind)}${j.h ? " · " + esc(j.h) : ""}\n${esc(j.why || "")}</div>${cs}
-      <div class="acts">${j.url ? `<button data-u="${esc(j.url)}">Open on GitHub</button>` : ""}${!["done", "drop"].includes(j.st) ? `<button class="dng" data-d="${id}">Drop</button>` : ""}${j.st === "drop" && j.kind === "fix" ? `<button data-rq="${id}">Try again</button>` : ""}</div></div></div>
+    let nq = null;
+    try { nq = typeof j.question_json === "string" ? JSON.parse(j.question_json) : j.question_json; } catch {}
+    const needBox = j.st === "need_user" ? `<div class="sec"><div class="box nqbox">
+      <div class="hd2"><b>Input needed (${esc(A.NM?.[nq?.worker] || nq?.worker || "worker")})</b>${nq?.secret ? `<span class="pill warn">encrypted → $${esc(nq?.env_name || "")}</span>` : ""}</div>
+      <div class="msg" style="color:var(--t1);margin-top:6px">${esc(nq?.question || j.why || "Worker requested user assistance.")}</div>
+      ${nq?.why ? `<div class="hint" style="margin-top:4px">${esc(nq.why)}</div>` : ""}
+      ${nq?.choices?.length ? `<div class="cchips" style="margin-top:8px">${nq.choices.map((c) => `<button type="button" class="nqch" data-v="${esc(c)}">${esc(c)}</button>`).join("")}</div>` : ""}
+      <div style="margin-top:8px">${nq?.secret ? `<input type="password" id="nqa" autocomplete="off" placeholder="Enter ${esc(nq?.env_name || "secret")} (encrypted in Vault)">` : `<textarea id="nqa" style="min-height:64px" placeholder="Type your answer to resume the job…"></textarea>`}</div>
+      <div class="acts"><button class="pri" id="nqb">Send Reply &amp; Resume</button></div><div class="msg" id="nqm"></div>
+    </div></div>` : "";
+    const ansHtml = (j.answers?.length || j.secret_envs?.length) ? `<div class="sec"><h4>User answers &amp; secrets</h4><div class="box">${(j.answers || []).map((a) => `<div class="ck" style="margin:3px 0"><b>${esc(a.q || "Question")}:</b> <span>${a.secret ? `encrypted as $${esc(a.env_name || "")}` : esc(a.a || "")}</span></div>`).join("")}${j.secret_envs?.length ? `<div class="hint" style="margin-top:4px">Stored Vault env vars: ${j.secret_envs.map((x) => "$" + esc(x)).join(", ")}</div>` : ""}</div></div>` : "";
+    B.innerHTML = `${needBox}<div class="sec"><div class="box"><div class="hd2"><b>${esc(j.title)}</b><span class="pill">${esc(j.st)}</span></div><div class="msg">${esc(j.repo)} ${esc(tag)} · ${esc(j.kind)}${j.h ? " · " + esc(j.h) : ""}\n${esc(j.why || "")}</div>${cs}
+      <div class="acts">${j.url ? `<button data-u="${esc(j.url)}">Open on GitHub</button>` : ""}${!["done", "drop"].includes(j.st) ? `<button class="dng" data-d="${id}">Drop</button>` : ""}${j.st === "drop" && ["fix", "build", "design_fix", "test_app"].includes(j.kind) ? `<button data-rq="${id}">Try again</button>` : ""}</div></div></div>
+      ${ansHtml}
       ${j.df ? `<div class="sec"><h4>Diff</h4>${dview(j.df)}</div>` : ""}
       <div class="sec"><h4>Log</h4><div class="log">${ev || `<div class="empty">nothing yet</div>`}</div></div>`;
+    if (j.st === "need_user") {
+      B.querySelectorAll(".nqch").forEach((btn) => { btn.onclick = () => { $("nqa").value = btn.dataset.v || ""; $("nqa").focus(); }; });
+      $("nqb").onclick = async () => {
+        const answer = ($("nqa")?.value || "").trim();
+        if (!answer) { $("nqm").className = "msg bad2"; $("nqm").textContent = "Enter an answer first."; return; }
+        busy($("nqb"), true, "Resuming…"); $("nqm").className = "msg"; $("nqm").textContent = "";
+        const r = await post({ a: "answer", id, answer, secret: !!nq?.secret, env_name: nq?.env_name || "" });
+        if (r.error) { busy($("nqb"), false, "Send Reply & Resume"); $("nqm").className = "msg bad2"; $("nqm").textContent = r.error; return; }
+        A.apply(r); job(id);
+      };
+    }
   };
   A.job = job;
 
