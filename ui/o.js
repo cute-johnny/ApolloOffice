@@ -441,7 +441,7 @@
     radio(356, 9, t);
     plant(312, 112);
     plant(456, 210);
-    wing(t);
+    if (S?.orch) wing(t);
     paths(t);
     intake(t);
     RK().forEach(([h, lb], i) => rack(336 + i * 19, 100, t, h, lb));
@@ -581,9 +581,14 @@
     const a = S.n;
     $("cQ").innerHTML = `vet <b>${a.vet || 0}</b> · ready <b>${a.ready || 0}</b> · approve <b>${a.approve || 0}</b> · done <b>${a.done || 0}</b>`;
     $("bPause").textContent = o.man ? "Resume office" : "Pause office";
+    // Front desk switched off (the default): no "Ask the office" button and
+    // no open chat; Projects stays only while there are projects to manage.
+    $("bAsk").hidden = !S.orch;
+    if (!S.orch && window.AO.chat && !$("chat").hidden) window.AO.chat(false);
     const bp = $("bProj");
     if (bp) {
       const ps = S.projects || [];
+      bp.hidden = !S.orch && !ps.length;
       const act = ps.filter((p) => !["done", "drop"].includes(p.st));
       const attn = act.filter((p) => ["waiting_milestone", "need_user", "budget_reached"].includes(p.st)).length;
       bp.textContent = attn ? `Projects (${act.length} · ${attn} waiting)` : act.length ? `Projects (${act.length})` : ps.length ? `Projects (${ps.length})` : "Projects";

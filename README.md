@@ -96,6 +96,11 @@ Options: `--port` (default 47300), `--data <folder>`.
 
 ## Ask the office
 
+The front desk is off by default. Turn it on under **Settings → General →
+Front desk**. While it is off, the **Ask the office** button and the boss are
+hidden, and multi-milestone projects (Architect, Builder) wait in the queue.
+The other workers keep running as usual.
+
 Click **Ask the office** in the header and say what you need in your own
 words. The front desk, a small AI model, works out what you mean and hands the
 work to the right worker; after that the office carries on by itself.

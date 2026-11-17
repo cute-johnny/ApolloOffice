@@ -143,7 +143,8 @@
     save(); draw();
   };
 
-  const toggle = (on) => { el.hidden = !on; $("bAsk").classList.toggle("on", on); if (on) { draw(); inp.focus(); } };
+  // The chat opens only while the front desk is switched on (state `orch`).
+  const toggle = (on) => { if (on && !A.S?.orch) return; el.hidden = !on; $("bAsk").classList.toggle("on", on); if (on) { draw(); inp.focus(); } };
   A.chat = toggle;
   $("bAsk").onclick = () => toggle(el.hidden);
   $("chX").onclick = () => toggle(false);

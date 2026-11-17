@@ -185,6 +185,10 @@ async fn front_desk_chat_routes_requests_to_workers() {
     post("/api/act", json!({"a": "pause", "on": true})).await;
     let a = post("/api/repo", json!({"op": "add", "full": "o/r"})).await;
     assert_eq!(a["full"], "o/r", "{a}");
+    // The front desk is off by default: the chat refuses until the owner turns it on.
+    let off = c.post(format!("{o}/api/chat")).header("cookie", &ck).header("origin", &o).header("x-ao", "1").json(&json!({"msgs": [{"r": "you", "t": "hi"}]})).send().await.unwrap();
+    assert_eq!(off.status().as_u16(), 409);
+    assert_eq!(post("/api/set", json!({"orch": true})).await["set"]["orch"], true);
 
     let mut msgs = vec![];
     let mut say = |t: &str| {
@@ -284,6 +288,8 @@ async fn multi_milestone_project_orchestrator() {
     assert_eq!(post("/api/repo", json!({"op": "add", "full": "o/app"})).await["full"], "o/app");
     // Leave repo CI empty initially to confirm Architect's ci_cmd runs on M1 and backfills rp.ci.
     post("/api/repo", json!({"op": "set", "full": "o/app", "hunt": false, "iss": false})).await;
+    assert_eq!(get("/api/state").await["orch"], false, "the orchestrator is off by default");
+    assert_eq!(post("/api/set", json!({"orch": true})).await["set"]["orch"], true);
 
     let plan = post("/api/chat", json!({"msgs": [{"r": "you", "t": "Build a full project counter app with CLI and UI"}]})).await;
     assert_eq!(plan["plan"][0]["to"], "architect", "{plan}");

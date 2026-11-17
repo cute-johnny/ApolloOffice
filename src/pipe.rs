@@ -24,6 +24,8 @@ fn dir(a: &Ax, j: &Job) -> String {
     format!("{}/{}", hbid(a, &j.h()), slug(&j.repo))
 }
 
+const ORCH_OFF_WHY: &str = "waits: the front desk orchestrator is off (Settings → General → Front desk)";
+
 pub fn rp(a: &Ax, r: &str) -> Value {
     a.db.one("select * from rp where full=?", pa![r.to_string()]).unwrap_or(json!({}))
 }
@@ -2356,6 +2358,15 @@ async fn pick(a: &Ax, h: &str) -> Option<i64> {
                 if st_now != "submit" && matches!(proj.st.as_str(), "paused" | "waiting_milestone" | "budget_reached" | "need_user") {
                     continue;
                 }
+                // The orchestrator is off: project jobs wait in the queue
+                // (a job already pushing its branch may still finish), and
+                // say why, so a stalled project is not a mystery.
+                if st_now != "submit" && !a.orch() {
+                    if j["why"].as_str() != Some(ORCH_OFF_WHY) {
+                        a.db.jset(id, &[("why", json!(ORCH_OFF_WHY))]);
+                    }
+                    continue;
+                }
                 if st_now != "submit" && proj.budget_usd > 0.0 && proj.spent_usd >= proj.budget_usd {
                     a.db.pset(pid, &[("st", json!("budget_reached"))]);
                     a.say("fixer", &format!("project #{pid} paused: budget cap ${:.2} reached (spent ${:.2})", proj.budget_usd, proj.spent_usd), Some(id));
@@ -2405,6 +2416,11 @@ async fn pick(a: &Ax, h: &str) -> Option<i64> {
             }
             ac.insert(format!("{r} {h}"));
             lk.insert(id);
+        }
+        // Clear a "waits…" note left while the orchestrator was off or a
+        // prerequisite was dropped.
+        if j["why"].as_str().is_some_and(|w| w.starts_with("waits")) {
+            a.db.jset(id, &[("why", json!("picked up again"))]);
         }
         return Some(id);
     }
@@ -2837,4 +2853,36 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'output_tok
         std::fs::remove_dir_all(dd).unwrap();
     }
 
+    /// An office with one machine, one repository and a running project.
+    fn project_office() -> (Ax, i64) {
+        let db = crate::db::Db::mem();
+        db.run("insert into hs(id,on_) values('local',1)", crate::pa![]);
+        db.run("insert into rp(full,on_) values('o/app',1)", crate::pa![]);
+        let pid = db.pnew("o/app", "App", "spec", "epic/app", false, 0.0);
+        db.pset(pid, &[("st", json!("running"))]);
+        (std::sync::Arc::new(crate::app::App::new(db, std::env::temp_dir(), 1, "x".into())), pid)
+    }
+
+    fn free(a: &Ax) {
+        a.act.lock().unwrap().clear();
+        a.lk.lock().unwrap().clear();
+    }
+
+    #[tokio::test]
+    async fn project_jobs_wait_while_the_orchestrator_is_off() {
+        let (a, pid) = project_office();
+        let m1 = a.db.jnew_proj("o/app", 0, "build", "M1", "", "ready", "", json!({}), None, 0.0, Some(pid), 1, &[], "epic/app");
+        // A job outside any project (design_fix needs no CI command or GitHub call here).
+        let other = a.db.jnew("o/app", 0, "design_fix", "Polish", "", "ready", "", json!({}), None, 0.0);
+        // Off by default: the project's milestone waits and says why; other work runs.
+        assert_eq!(pick(&a, "local").await, Some(other));
+        free(&a);
+        a.db.jset(other, &[("st", json!("done"))]);
+        assert_eq!(pick(&a, "local").await, None);
+        assert_eq!(a.db.jg(m1).unwrap().why, ORCH_OFF_WHY);
+        // Switched on, the milestone runs and the note is cleared.
+        a.db.ks("set", &json!({"orch": true}));
+        assert_eq!(pick(&a, "local").await, Some(m1));
+        assert_eq!(a.db.jg(m1).unwrap().why, "picked up again");
+    }
 }

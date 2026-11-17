@@ -155,6 +155,7 @@ pub fn dset() -> Value {
             "reviewer": "claude-haiku-5-5", "big": "claude-opus-5-5", "desk": "claude-sonnet-5-5"
         },
         "big": true,
+        "orch": false,
         "hunters": 2,
         "tokday": 0,
         "budday": 0,
@@ -284,6 +285,13 @@ impl App {
 
     pub fn tok(&self, w: &str, i: i64, o: i64) {
         self.db.run("insert into tok(day,w,tin,tout) values(?,?,?,?) on conflict(day,w) do update set tin=tin+excluded.tin, tout=tout+excluded.tout", pa![crate::db::day(), w.to_string(), i, o]);
+    }
+
+    /// Whether the front desk orchestrator is switched on (Settings → General).
+    /// Off by default: the chat, the boss on the floor and project
+    /// (Architect/Builder) work only run when the owner turns it on.
+    pub fn orch(&self) -> bool {
+        self.set()["orch"].as_bool().unwrap_or(false)
     }
 
     pub fn hold(&self, w: &str) -> bool {
@@ -421,5 +429,19 @@ mod provider_limit_tests {
         assert!(a.lv.lock().unwrap().o.pause.contains("daily token limit"));
         a.db.ks("set",&json!({"free_first":false,"tokday":0}));a.tick();
         assert!(a.lv.lock().unwrap().o.pause.contains("Claude usage limit"));
+    }
+}
+
+#[cfg(test)]
+mod orch_tests {
+    use super::*;
+    #[test]
+    fn front_desk_orchestrator_is_off_by_default_and_follows_the_setting() {
+        let a = App::new(Db::mem(), std::env::temp_dir(), 1, "x".into());
+        assert!(!a.orch());
+        a.db.ks("set", &json!({"orch": true}));
+        assert!(a.orch());
+        a.db.ks("set", &json!({"orch": false}));
+        assert!(!a.orch());
     }
 }

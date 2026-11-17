@@ -30,6 +30,8 @@ fn js(v: Value) -> Response<Body> {
     rs(StatusCode::OK, "application/json", v.to_string())
 }
 
+const DESK_OFF: &str = "the front desk is switched off; turn it on under Settings → General → Front desk";
+
 fn er(c: StatusCode, m: &str) -> Response<Body> {
     rs(c, "application/json", json!({"error": m}).to_string())
 }
@@ -114,7 +116,7 @@ fn state(a: &Ax) -> Value {
     }
     let lm = a.db.kg("lm");
     json!({
-        "t": now(), "v": crate::app::V,
+        "t": now(), "v": crate::app::V, "orch": a.orch(),
         "o": o, "w": wv, "fl": fl, "ln": ln, "cil": cil, "hst": hst,
         "hs": a.db.all("select id, ln, dk, on_ from hs order by id='local' desc, id", pa![]),
         "q": a.db.all("select id,repo,num,kind,title,url,st,why,pr,t0,t1,project_id,milestone_idx,question_json,json_extract(d,'$.h') h from jobs where st not in ('done','drop') order by st in ('hunt','repro','fix','ci','design','test','review','gate','submit') desc, st in ('need_user','approve') desc, st='vet', id limit 60", pa![]),
@@ -218,6 +220,9 @@ fn sets(a: &Ax, b: &Value) {
     }
     if let Some(x) = b["big"].as_bool() {
         s["big"] = json!(x);
+    }
+    if let Some(x) = b["orch"].as_bool() {
+        s["orch"] = json!(x);
     }
     if let Some(x) = b["hunters"].as_i64() {
         s["hunters"] = json!(x.clamp(0, 12));
@@ -1025,6 +1030,7 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
             }
             js(state(a))
         }
+        ("POST", "/api/chat" | "/api/chat/go") if !a.orch() => er(StatusCode::CONFLICT, DESK_OFF),
         ("POST", "/api/chat") => match crate::desk::chat(a, &b).await {
             Ok(v) => js(v),
             Err(e) => er(StatusCode::BAD_REQUEST, &e),
@@ -1137,12 +1143,17 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
             }
         }
         ("POST", "/api/set") => {
+            let was = a.orch();
             sets(a, &b);
             if b["test"].as_bool().unwrap_or(false) {
                 crate::ntf::send(a, "ApolloOffice", "Test notification", 3).await;
             }
             if let Some(x) = b["auto"].as_bool() {
                 let _ = crate::sys::autostart(x, &a.me, &a.dd, a.port);
+            }
+            if let Some(x) = b["orch"].as_bool().filter(|x| *x != was) {
+                a.say("scout", if x { "front desk orchestrator switched on" } else { "front desk orchestrator switched off; project work waits until it is on again" }, None);
+                a.sw.notify_one();
             }
             js(cfg(a))
         }
@@ -1518,5 +1529,14 @@ mod t {
         assert_eq!(a.db.pg(pid).unwrap().st, "running");
         assert!(!st.to_string().contains("sk_live_secret_value_123"));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn front_desk_chat_is_refused_while_the_orchestrator_is_off() {
+        let a = std::sync::Arc::new(crate::app::App::new(crate::db::Db::mem(), std::env::temp_dir(), 1, "x".into()));
+        for p in ["/api/chat", "/api/chat/go"] {
+            assert_eq!(api(&a, &Method::POST, p, "", json!({})).await.status(), StatusCode::CONFLICT);
+        }
+        assert_eq!(state(&a)["orch"], false);
     }
 }
