@@ -792,10 +792,22 @@ async fn create_repo(a: &Ax, b: &Value) -> Response<Body> {
 
 fn project_act(a: &Ax, b: &Value) -> Result<Value, (StatusCode, String)> {
     let id = b["id"].as_i64().unwrap_or(0);
-    let Some(_p) = a.db.pg(id) else {
+    let Some(p) = a.db.pg(id) else {
         return Err((StatusCode::NOT_FOUND, "no such project".into()));
     };
     let op = b["op"].as_str().unwrap_or("");
+    // Same rules as the Projects drawer buttons, so an old page or a script
+    // cannot revive a finished project or pause one that is not running.
+    let allowed = match op {
+        "continue" => matches!(p.st.as_str(), "waiting_milestone" | "paused" | "budget_reached"),
+        "pause" => matches!(p.st.as_str(), "running" | "planning"),
+        "drop" => !matches!(p.st.as_str(), "done" | "drop"),
+        _ => true,
+    };
+    if !allowed {
+        return Err((StatusCode::CONFLICT, format!("project #{id} is {}; it cannot {op} now", p.st)));
+    }
+    let resume = b["resume"].as_bool() == Some(true) && p.st == "budget_reached";
     let mut updates: Vec<(&str, Value)> = vec![];
     if let Some(pe) = b["pause_each"].as_bool() {
         updates.push(("pause_each", json!(pe)));
@@ -828,11 +840,11 @@ fn project_act(a: &Ax, b: &Value) -> Result<Value, (StatusCode, String)> {
             a.say("fixer", &format!("project #{id} dropped by owner"), None);
         }
         "set" => {
-            if b["resume"].as_bool() == Some(true) {
+            if resume {
                 updates.push(("st", json!("running")));
             }
             a.db.pset(id, &updates);
-            if b["resume"].as_bool() == Some(true) {
+            if resume {
                 a.sw.notify_one();
             }
         }
@@ -1505,6 +1517,12 @@ mod t {
         let r3 = project_act(&a, &json!({"id": pid, "op": "drop"})).unwrap();
         assert_eq!(r3["project"]["st"], "drop");
         assert_eq!(a.db.jg(j1).unwrap().st, "drop");
+        // A finished project cannot be revived, paused or dropped again.
+        for op in ["continue", "pause", "drop"] {
+            assert_eq!(project_act(&a, &json!({"id": pid, "op": op})).unwrap_err().0, StatusCode::CONFLICT, "{op}");
+        }
+        let r4 = project_act(&a, &json!({"id": pid, "op": "set", "budget_usd": 5.0, "resume": true})).unwrap();
+        assert_eq!((r4["project"]["st"].as_str(), r4["project"]["budget_usd"].as_f64()), (Some("drop"), Some(5.0)));
     }
 
     #[test]
