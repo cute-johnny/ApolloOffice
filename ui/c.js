@@ -89,7 +89,25 @@
       return `<div class="chneed-row"><span><b>Job ${j.id}:</b> ${esc(qtxt)}</span><button type="button" class="go" data-nj="${j.id}">Reply</button></div>`;
     }).join("");
   };
-  A.onNeed = renderNeed;
+  // Upstream calls A.onState(s) on every poll (r.js chains it); show the
+  // header buttons and the "waiting for you" strip from there.
+  const sync = (s) => {
+    if (!s) return;
+    $("bAsk").hidden = !s.orch;
+    if (!s.orch && !el.hidden) toggle(false);
+    const bp = $("bProj");
+    if (bp) {
+      const ps = s.projects || [];
+      bp.hidden = !s.orch && !ps.length;
+      const act = ps.filter((p) => !["done", "drop"].includes(p.st));
+      const attn = act.filter((p) => ["waiting_milestone", "need_user", "budget_reached"].includes(p.st)).length;
+      bp.textContent = attn ? `Projects (${act.length} · ${attn} waiting)` : act.length ? `Projects (${act.length})` : ps.length ? `Projects (${ps.length})` : "Projects";
+    }
+    renderNeed();
+  };
+  const prevState = A.onState;
+  A.onState = (s) => { prevState && prevState(s); sync(s); };
+  setTimeout(() => sync(A.S), 0);
   if (needEl) needEl.onclick = (e) => { const b = e.target.closest("[data-nj]"); if (b && A.job) A.job(Number(b.dataset.nj)); };
   const draw = () => {
     log.innerHTML = (msgs.length ? msgs.map(bubble).join("") : intro()) + (busy ? `<div class="cm desk wait">The front desk is thinking…</div>` : "");
@@ -148,9 +166,10 @@
   };
 
   // The chat opens only while the front desk is switched on (state `orch`).
-  const toggle = (on) => { if (on && !A.S?.orch) return; el.hidden = !on; $("bAsk").classList.toggle("on", on); if (on) { draw(); inp.focus(); } };
+  const toggle = (on) => { if (on && !A.S?.orch) return; const was = !el.hidden; el.hidden = !on; $("bAsk").classList.toggle("on", on); $("bAsk").setAttribute("aria-expanded", String(on)); if (on) { draw(); inp.focus(); } else if (was && el.contains(document.activeElement)) $("bAsk").focus({ preventScroll: true }); };
   A.chat = toggle;
   $("bAsk").onclick = () => toggle(el.hidden);
+  if ($("bProj")) $("bProj").onclick = () => A.projects && A.projects(false);
   $("chX").onclick = () => toggle(false);
   $("chN").onclick = () => { if (busy) return; msgs = []; draftId = ""; setSpec(null); save(); draw(); inp.focus(); };
   $("chG").onclick = () => A.role && A.role("desk");
@@ -200,5 +219,5 @@
     save();
     const at = log.scrollTop; draw(); log.scrollTop = at;
   };
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !el.hidden && $("dr").hidden) toggle(false); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !el.hidden && $("dr").hidden && !document.querySelector(".cmdk, .ddm") && el.contains(document.activeElement)) toggle(false); });
 })();

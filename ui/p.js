@@ -1,10 +1,26 @@
 (() => {
   const A = window.AO, { get, post, esc, $ } = A;
-  const dr = $("dr"), T = $("drT"), B = $("drB");
-  let cur = "", cfg = null, ck = null, jid = 0;
+  const dr = $("dr"), T = $("drT");
+  let B = $("drB"), cur = "", cfg = null, ck = null, jid = 0;
+  const PG = { repos: "Repositories", hosts: "Machines", set: "Settings", cost: "Costs", health: "Health" };
 
-  const show = (t, k) => { cur = k; T.textContent = t; dr.hidden = false; };
-  const hide = () => { dr.hidden = true; cur = ""; jid = 0; };
+  const show = (t, k) => {
+    cur = k;
+    if (PG[k]) {
+      const r = { repos: "repos", hosts: "machines", set: "settings", cost: "costs", health: "health" }[k];
+      if (A.route && A.route() !== r) location.hash = "#/" + r;
+      B = $("pgB"); B.dataset.k = k; $("vt").textContent = PG[k]; return;
+    }
+    B = $("drB"); T.textContent = t; clearTimeout(dto); dr.classList.remove("out"); dr.hidden = false;
+  };
+  let dto = 0;
+  const hide = () => {
+    cur = ""; jid = 0;
+    if (dr.hidden || matchMedia("(prefers-reduced-motion: reduce)").matches) { dr.hidden = true; return; }
+    dr.classList.add("out");
+    clearTimeout(dto);
+    dto = setTimeout(() => { dr.hidden = true; dr.classList.remove("out"); }, 170);
+  };
   $("drX").onclick = hide;
   dr.onclick = (e) => { if (e.target === dr) hide(); };
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !dr.hidden) hide(); });
@@ -87,73 +103,104 @@
     if (v) v.outerHTML = dview(ldf);
   });
 
-  const repos = async () => {
-    cfg = await get("/api/cfg");
-    show("Repos", "repos");
-    const rs = cfg.repos;
-    let op = new Set();
-    try { op = new Set(JSON.parse(sessionStorage.getItem("ao.ro") || "[]")); } catch {}
-    const chip = (c, t, ti) => `<span class="chip ${c}" title="${esc(ti || "")}">${t}</span>`;
-    const st = (r) => {
-      const x = r.st || {}, c = [];
-      if (!yes(r.on_)) c.push(chip("", "paused", "Not active"));
-      if (!r.ci) c.push(chip("bad", "no tests", "No test command"));
-      if (x.red) c.push(chip("bad", "main red", "CI is red on the default branch, jobs wait"));
-      if (yes(r.iss)) c.push(chip(x.iv > 0 ? "" : "info", x.iv > 0 ? `issues · every ${x.iv >= 60 ? x.iv / 60 + " h" : x.iv + " min"}` : "issues", x.iv > 0 ? "Issues here rarely become PRs, so the Scout checks less often" : "Works on open issues"));
-      if (yes(r.hunt)) c.push(chip("info", "hunt", "Hunts for bugs itself"));
-      if (yes(r.feat)) c.push(chip("info", "features", "Builds requested features"));
-      c.push(chip(r.mode === "auto" ? "ok" : "", r.mode === "auto" ? "auto PR" : "approve", r.mode === "auto" ? "Submits pull requests automatically" : "Waits for your approval"));
-      return c.join("");
-    };
-    const nums = (r) => {
-      const x = r.st || {};
-      const it = (v, l, c, ti) => `<span title="${esc(ti)}"><b class="${c || ""}">${v ?? 0}</b> ${l}</span>`;
-      return [it(x.m14, "merged", "ok2", "Merged in the last 14 days"), it(x.op, "open", "", "Open pull requests"), x.old ? it(x.old, "open > 7 d", "bad2", "Open longer than 7 days without merge") : "", yes(r.iss) ? it(`${x.ik || 0}/${x.is || 0}`, "issues → PR", x.is >= 30 && !x.ik ? "bad2" : "", "Issues taken in the last 14 days that became a pull request") : "", it(x.q, "queued", "", "Jobs waiting in Vet or ready"), it(usd(x.usd || 0), "14 d", "", "API cost in the last 14 days")].filter(Boolean).join("");
-    };
-    B.innerHTML = `<div class="sec"><div class="box"><form id="fa" class="acts" style="margin:0"><input type="text" name="full" placeholder="Add existing repository: owner/name or GitHub link" style="flex:1;min-width:200px"><button class="pri">Add</button></form><div class="msg" id="am"></div>
-      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--ln)"><form id="fc" class="acts" style="margin:0"><input type="text" name="name" placeholder="Or create new GitHub repo: my-new-app" style="flex:1;min-width:180px"><select name="vis"><option value="private">Private</option><option value="public">Public</option></select><button type="submit">Create repo</button></form><div class="msg" id="cm"></div></div></div></div>
-    <div class="sec"><div class="rh"><h4>${rs.length} ${rs.length === 1 ? "repository" : "repositories"}</h4>${rs.length > 4 ? `<input type="text" id="rq" placeholder="Filter" autocomplete="off">` : ""}</div>${rs.map((r) => `<form class="box rr" data-r="${esc(r.full)}"><details ${op.has(r.full) ? "open" : ""}><summary><span class="rn">${esc(r.full)}</span><span class="rc">${st(r)}</span><span class="rs">${nums(r)}</span></summary>
+  const ph = (d, act) => `<div class="ph2"><div>${d ? `<p>${d}</p>` : ""}</div><div class="pa2">${act || ""}</div></div>`;
+  const kpi = (xs) => `<div class="kpis">${xs.map(([v, l, c]) => `<div><b class="${c || ""}">${v}</b><span>${l}</span></div>`).join("")}</div>`;
+  let rq = "";
+  const fun = (r) => {
+    const d = (r.st || {}).dr || {};
+    const it = (k, l, ti, c) => d[k] ? `<div title="${esc(ti)}"><b class="${c || ""}">${d[k]}</b><span>${l}</span></div>` : "";
+    const v = [it("done", "submitted", "Fix jobs that ended in a pull request", "ok2"), it("vet", "rejected by Vet", "Vet judged the issue unsuitable: unclear, bundled, already claimed or paused"), it("guard", "blocked by Guard", "Guard found suspicious content such as hidden instructions"), it("repro", "not reproducible", "The bug could not be reproduced on the build machine"), it("fix", "no valid fix", "Fixer, CI or Reviewer could not produce a fix that passes"), it("late", "too late", "Someone else opened a PR or claimed the issue first"), it("host", "machine errors", "Dropped because a build machine failed", "bad2"), it("own", "dropped by you", "Dropped from the queue by hand")].filter(Boolean);
+    return v.length ? `<div class="sec"><h4>Fix jobs, last 14 days</h4><div class="stl">${v.join("")}</div></div>` : "";
+  };
+  const rdet = (full) => {
+    const r = cfg.repos.find((x) => x.full === full);
+    if (!r) return;
+    show(full, "rdr");
+    const D = B, x = r.st || {};
+    D.innerHTML = `<form class="rfm" data-r="${esc(r.full)}">
       ${r.ci ? "" : `<div class="warn">No test command found. Enter the command that runs this repository's tests, otherwise nothing happens here.</div>`}
-      <div class="fm">
+      <div class="kp">${[[x.m14 ?? 0, "merged, 14 d", "ok2"], [x.op ?? 0, "open"], [x.old ?? 0, "open > 7 d", x.old ? "bad2" : ""], [x.q ?? 0, "queued"], [usd(x.usd || 0), "cost, 14 d"]].map(([v, l, c]) => `<div><b class="${c || ""}">${v}</b><span>${l}</span></div>`).join("")}</div>
+      ${fun(r)}
+      <div class="sec"><h4>Work</h4><div class="box"><div class="fm">
         <label>Status</label>${tg("on_", r.on_, "active")}
-        <label>Work on</label><div class="acts" style="margin:0">${tg("iss", r.iss, "open issues")}${tg("hunt", r.hunt, "hunt for bugs itself")}${tg("feat", r.feat, "build requested features")}</div>
+        <label>Work on</label><div class="acts">${tg("iss", r.iss, "open issues")}${tg("hunt", r.hunt, "hunt for bugs itself")}${tg("feat", r.feat, "build requested features")}</div>
         <label>Skip labels</label><input type="text" name="skl" value="${esc(r.skl || "")}" placeholder="e.g. area:kernel, needs-design">
-        <div class="hint">Issues with one of these labels are never picked up. Labels like paused, blocked, on hold, epic or tracking are always skipped.</div>
-        <label>Test command</label><input type="text" name="ci" value="${esc(r.ci)}" placeholder="e.g. cargo test, npm test, pytest">
-        <div class="hint">Runs from the repository root. A fix is only submitted when this passes.</div>
-        <label>Setup command</label><input type="text" name="setup" value="${esc(r.setup)}" placeholder="optional, e.g. npm ci">
-        <div class="hint">Runs before every job, after checkout.</div>
         <label>Pull requests</label><select name="mode"><option value="ask" ${r.mode !== "auto" ? "selected" : ""}>wait for my approval</option><option value="auto" ${r.mode === "auto" ? "selected" : ""}>submit automatically</option></select>
-        <label>Limits</label><div class="lm"><span>open</span><input type="number" name="maxo" min="0" max="10000" value="${r.maxo}"><span>new per day</span><input type="number" name="maxd" min="0" max="10000" value="${r.maxd}"><span>USD per day</span><input type="number" name="bud" min="0" step="0.01" value="${r.bud || 0}"></div>
-        <div class="hint">Most open PRs at once and new PRs per day. The daily budget counts API keys only, 0 = no limit.</div>
         <label>PR footer</label>${tg("nm", r.nm ?? 1, "mention ApolloOffice with a link")}
-        <div class="hint">The AI note and the Co-Authored-By trailers are always added.</div>
-        <label>Your rules</label><textarea name="rules" placeholder="optional, e.g. never touch the plugin API">${esc(r.rules)}</textarea>
-      </div>
-      <div class="acts"><button class="pri" data-op="set" disabled>Saved</button><button type="button" data-op="detect">Detect test command</button><span class="sp"></span><button type="button" class="dng" data-op="del">Remove</button></div><div class="msg"></div></details></form>`).join("") || `<div class="empty">No repository yet.</div>`}</div>`;
-    if ($("rq")) $("rq").oninput = (e) => { const q = e.target.value.trim().toLowerCase(); for (const f of B.querySelectorAll("form.rr")) f.hidden = q && !f.dataset.r.toLowerCase().includes(q); };
-    for (const d of B.querySelectorAll("form.rr details")) d.ontoggle = () => {
-      const k = d.closest("form").dataset.r;
-      d.open ? op.add(k) : op.delete(k);
-      try { sessionStorage.setItem("ao.ro", JSON.stringify([...op])); } catch {}
+      </div></div></div>
+      <div class="sec"><h4>Build</h4><div class="box"><div class="fm">
+        <label>Test command</label><input type="text" name="ci" value="${esc(r.ci)}" placeholder="e.g. cargo test, npm test, pytest">
+        <label>Setup command</label><input type="text" name="setup" value="${esc(r.setup)}" placeholder="optional, e.g. npm ci">
+      </div></div></div>
+      <div class="sec"><h4>Limits</h4><div class="box"><div class="fm">
+        <label>Open pull requests</label><input type="number" name="maxo" min="0" max="10000" value="${r.maxo}">
+        <label>New per day</label><input type="number" name="maxd" min="0" max="10000" value="${r.maxd}">
+        <label>USD per day</label><input type="number" name="bud" min="0" step="0.01" value="${r.bud || 0}">
+      </div></div></div>
+      <div class="sec"><h4>Your rules</h4><textarea name="rules" placeholder="optional, e.g. never touch the plugin API">${esc(r.rules)}</textarea></div>
+      <div class="sbar"><button class="pri" data-op="set" disabled>Saved</button><button type="button" data-op="detect">Detect test command</button><span class="msg"></span><span class="sp"></span><button type="button" class="dng" data-op="del">Remove</button></div></form>`;
+    const f = D.querySelector("form"), sb = f.querySelector('[data-op="set"]'), m = f.querySelector(".msg");
+    const dirty = () => { sb.disabled = false; sb.textContent = "Save changes"; m.textContent = ""; };
+    f.addEventListener("input", dirty);
+    f.addEventListener("change", dirty);
+    f.onsubmit = (e) => e.preventDefault();
+    f.onclick = async (e) => {
+      const b = e.target.closest("button[data-op]");
+      if (!b) return;
+      e.preventDefault();
+      const op = b.dataset.op;
+      if (op === "del") {
+        if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Click again to remove"; return; }
+        await post({ op: "del", full }, "/api/repo");
+        hide();
+        return repos();
+      }
+      if (op === "detect") {
+        busy(b, true, "Detecting…");
+        const r2 = await post({ op: "detect", full }, "/api/repo");
+        busy(b, false, "Detect test command");
+        if (r2.ci) { f.ci.value = r2.ci; if (r2.setup && !f.setup.value) f.setup.value = r2.setup; f.dispatchEvent(new Event("change")); m.className = "msg"; m.textContent = "Detected. Save to keep it."; }
+        else { m.className = "msg"; m.textContent = "Nothing detected."; }
+        return;
+      }
+      busy(b, true, "Saving…");
+      const r2 = await post({ op: "set", full, ...fv(f) }, "/api/repo");
+      if (r2.error) { busy(b, false, "Save changes"); m.className = "msg bad2"; m.textContent = r2.error; return; }
+      busy(b, true, "Saved");
+      m.className = "msg"; m.textContent = "";
+      repos();
     };
-    for (const f of B.querySelectorAll("form.rr")) {
-      const sb = f.querySelector('[data-op="set"]');
-      const dirty = () => { sb.disabled = false; sb.textContent = "Save changes"; f.querySelector(".msg").textContent = ""; };
-      f.addEventListener("input", dirty);
-      f.addEventListener("change", dirty);
-    }
+  };
+  const repos = async () => {
+    const [c0, F] = await Promise.all([get("/api/cfg"), get("/api/flows").catch(() => ({ flows: [] }))]);
+    cfg = c0;
+    const pl = (full) => (F.flows || []).filter((f) => f.nodes.some((n) => (n.t === "t.issue" || n.t === "t.pr") && (!n.c?.repo || n.c.repo === full))).map((f) => `<span class="${f.on ? "" : "t2"}" title="${f.on ? "On" : "Off"}">${esc(f.n)}</span>`).join(", ");
+    show("Repos", "repos");
+    const P0 = B, rs = cfg.repos;
+    const sum = (k) => rs.reduce((s, r) => s + ((r.st || {})[k] || 0), 0);
+    const flags = (r) => { const x = r.st || {}, c = []; if (!yes(r.on_)) c.push(`<i>Paused</i>`); if (!r.ci) c.push(`<i class="bad2">No test command</i>`); if (x.red) c.push(`<i class="bad2">Main is red</i>`); return c.join(""); };
+    const work = (r) => { const x = r.st || {}; return [yes(r.iss) && (x.iv > 0 ? `Issues, every ${x.iv >= 60 ? x.iv / 60 + " h" : x.iv + " min"}` : "Issues"), yes(r.hunt) && "Hunt", yes(r.feat) && "Features"].filter(Boolean).join(", ") || `<span class="t2">Off</span>`; };
+    const row = (r) => { const x = r.st || {}, [o, n] = r.full.includes("/") ? r.full.split("/") : ["", r.full]; return `<tr data-r="${esc(r.full)}" class="${yes(r.on_) ? "" : "dim"}"><td><b>${esc(n)}</b><span class="mut">${esc(o)}${flags(r) ? " · " : ""}${flags(r)}</span></td><td>${work(r)}</td><td>${r.mode === "auto" ? "Automatic" : "Ask me"}</td><td>${pl(r.full) || `<span class="t2">–</span>`}</td><td class="n">${x.m14 || 0}</td><td class="n">${x.op || 0}</td><td class="n">${x.old ? `<span class="bad2">${x.old}</span>` : `<span class="t2">0</span>`}</td><td class="n">${x.q || 0}</td><td class="n">${usd(x.usd || 0)}</td></tr>`; };
+    P0.innerHTML = ph(`${rs.filter((r) => yes(r.on_)).length} of ${rs.length} active. Click a repository to change what the office does there.`, `<form id="fa" class="inl"><input type="text" name="full" placeholder="owner/name or GitHub link" aria-label="Repository to add"><button class="go">Add repository</button></form>`)
+      + `<div class="msg" id="am"></div>`
+      + `<form id="fc" class="inl" style="margin:0 0 12px"><input type="text" name="name" placeholder="Or create a new GitHub repo: my-new-app" aria-label="New repository name"><select name="vis" aria-label="Visibility"><option value="private">Private</option><option value="public">Public</option></select><button type="submit">Create repo</button></form><div class="msg" id="cm"></div>`
+      + kpi([[sum("m14"), "merged, 14 days"], [sum("op"), "open pull requests"], [sum("q"), "queued jobs"], [usd(sum("usd")), "cost, 14 days"]])
+      + (rs.length ? `<div class="flt"><input type="text" id="rq" placeholder="Filter repositories" value="${esc(rq)}" autocomplete="off"></div><div class="tw"><table class="tb2"><thead><tr><th>Repository</th><th>Bug-fix team</th><th>Pull requests</th><th>Pipelines</th><th class="n">Merged</th><th class="n">Open</th><th class="n" title="Open longer than 7 days without merge">Stale</th><th class="n">Queued</th><th class="n">Cost</th></tr></thead><tbody>${rs.map(row).join("")}</tbody></table></div>` : `<div class="emp"><b>No repository yet</b><span>Add one above, for example owner/name.</span></div>`);
+    const flt = () => { const q = rq.trim().toLowerCase(); for (const t of P0.querySelectorAll("tr[data-r]")) t.hidden = !!q && !t.dataset.r.toLowerCase().includes(q); };
+    if ($("rq")) { $("rq").oninput = (e) => { rq = e.target.value; flt(); }; flt(); }
+    for (const t of P0.querySelectorAll("tr[data-r]")) t.onclick = () => rdet(t.dataset.r);
     $("fa").onsubmit = async (e) => {
       e.preventDefault();
       const b = e.target.querySelector("button"), m = $("am");
       busy(b, true, "Adding…");
       const r = await post({ op: "add", full: e.target.full.value }, "/api/repo");
-      busy(b, false, "Add");
+      busy(b, false, "Add repository");
       if (r.error) { m.className = "msg bad2"; m.textContent = r.error; return; }
       await repos();
       const n = $("am");
       n.className = "msg";
-      n.textContent = r.ci ? `Added ${r.full}. Test command detected: ${r.ci}${r.setup ? " (setup: " + r.setup + ")" : ""}. Check it below.` : `Added ${r.full}. No test command detected, please enter one below.`;
+      n.textContent = r.ci ? `Added ${r.full}. Test command detected: ${r.ci}${r.setup ? " (setup: " + r.setup + ")" : ""}.` : `Added ${r.full}. No test command detected, open it and enter one.`;
+      rdet(r.full);
     };
     $("fc").onsubmit = async (e) => {
       e.preventDefault();
@@ -167,56 +214,22 @@
       const n = $("cm");
       if (n) { n.className = "msg ok2"; n.textContent = `Created ${r.full} (${priv ? "private" : "public"}) and added it to the office.`; }
     };
-    for (const f of B.querySelectorAll("form[data-r]")) {
-      f.onsubmit = (e) => e.preventDefault();
-      f.onclick = async (e) => {
-        const b = e.target.closest("button[data-op]");
-        if (!b) return;
-        e.preventDefault();
-        const m = f.querySelector(".msg"), op = b.dataset.op, full = f.dataset.r;
-        if (op === "del") {
-          if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Click again to remove"; return; }
-          await post({ op: "del", full }, "/api/repo");
-          return repos();
-        }
-        if (op === "detect") {
-          busy(b, true, "Detecting…");
-          const r = await post({ op: "detect", full }, "/api/repo");
-          busy(b, false, "Detect test command");
-          if (r.ci) { f.ci.value = r.ci; if (r.setup && !f.setup.value) f.setup.value = r.setup; f.dispatchEvent(new Event("change")); m.textContent = "Detected. Save to keep it."; }
-          else m.textContent = "Nothing detected.";
-          return;
-        }
-        busy(b, true, "Saving…");
-        const r = await post({ op: "set", full, ...fv(f) }, "/api/repo");
-        if (r.error) { busy(b, false, "Save changes"); m.className = "msg bad2"; m.textContent = r.error; return; }
-        busy(b, true, "Saved");
-        m.className = "msg"; m.textContent = "";
-      };
-    }
   };
 
-  const hosts = async () => {
-    cfg = await get("/api/cfg");
-    show("Machines", "hosts");
-    const hs = cfg.hosts;
-    const hl = hs.some((h) => h.id === "local");
-    const form = (h, nw) => `<form class="box" data-h="${esc(h.id || "")}" data-new="${nw ? 1 : ""}"><div class="hd2"><b>${nw ? (h.id === "local" ? "This computer" : "SSH machine") : esc(h.id) + (h.ssh ? " · ssh " + esc(h.ssh) : " · this computer")}</b>${nw ? "" : tg("on", h.on_, "active")}</div>
-      <div class="fm">
+  const hform = (h, nw) => `<form class="hfm" data-h="${esc(h.id || "")}" data-new="${nw ? 1 : ""}">${nw ? `<div class="sec"><h4>${h.id === "local" ? "This computer" : "SSH machine"}</h4>` : `<div class="sec">`}<div class="box"><div class="fm">
+        ${nw ? "" : `<label>Status</label>${tg("on", h.on_, "active")}`}
         ${nw && h.id !== "local" ? `<label>SSH host</label><input type="text" name="ssh" placeholder="alias from ~/.ssh/config or user@host"><div class="hint">Key login must work without a password prompt.</div>` : ""}
         <label>Isolation</label><select name="dk"><option value="1" ${h.dk !== 0 ? "selected" : ""}>Docker container (recommended)</option><option value="0" ${h.dk === 0 ? "selected" : ""}>directly on the machine</option></select>
         <div class="hint raw" ${h.dk === 0 ? "" : "hidden"}><span style="color:var(--bad)">Workers build and run code from the repositories you add, directly with your user account, which can reach your GitHub, Claude and SSH logins on this machine. Only do this for repositories you trust.</span><br>${tg("raw", h.dk === 0 && !nw, "I understand")}</div>
         <label>Parallel jobs</label><input type="number" name="ln" min="1" max="8" value="${h.ln || 1}">
         <label>Parallel test runs</label><input type="number" name="ci" min="1" max="8" value="${h.ci || 1}">
-        <label>CPU limit</label><input type="number" name="cpu" min="0" value="${h.cpu || 0}"><div class="hint">Cores for the Docker container. 0 = all but one.</div>
-        <label>Skip repos</label><input type="text" name="no" value="${esc(h.no || "")}" placeholder="optional, e.g. owner/big-repo, other-repo"><div class="hint">Repositories this machine never builds, for example because they are too large for it.</div>
+        <label>CPU limit</label><input type="number" name="cpu" min="0" value="${h.cpu || 0}"><div class="hint">0 = all but one.</div>
+        <label>Skip repos</label><input type="text" name="no" value="${esc(h.no || "")}" placeholder="optional, e.g. owner/big-repo, other-repo">
         <label>Disk limit (GB)</label><input type="number" name="gb" min="5" value="${h.gb || 50}">
-        <div class="hint">Old clones and build folders are deleted above this, or when less than 20 GB are free.</div>
-      </div>
-      <div class="acts"><button class="pri" data-op="set">${nw ? "Add" : "Save"}</button>${nw ? "" : `<span class="sp"></span><button type="button" class="dng" data-op="del">Remove</button>`}</div><div class="msg"></div></form>`;
-    B.innerHTML = `<div class="sec"><h4>Machines that build and test</h4>${hs.map((h) => form(h, false)).join("") || `<div class="empty">No machine yet. Add this computer below.</div>`}</div>
-    <div class="sec"><h4>Add</h4>${hl ? "" : form({ id: "local", dk: 1 }, true)}${form({ id: "", dk: 1 }, true)}</div>`;
-    for (const f of B.querySelectorAll("form[data-h]")) {
+      </div></div>
+      <div class="acts"><button class="pri" data-op="set">${nw ? "Add" : "Save"}</button><span class="msg"></span>${nw ? "" : `<span class="sp"></span><button type="button" class="dng" data-op="del">Remove</button>`}</div></div></form>`;
+  const hbind = (root, hs) => {
+    for (const f of root.querySelectorAll("form[data-h]")) {
       f.dk.onchange = () => { f.querySelector(".raw").hidden = f.dk.value === "1"; };
       f.onsubmit = (e) => e.preventDefault();
       f.onclick = async (e) => {
@@ -229,6 +242,7 @@
         if (b.dataset.op === "del") {
           if (b.dataset.sure !== "1") { b.dataset.sure = "1"; b.textContent = "Click again to remove"; return; }
           await post({ op: "del", id }, "/api/host");
+          hide();
           return hosts();
         }
         const ex = hs.find((x) => x.id === id);
@@ -239,11 +253,34 @@
         busy(b, false, f.dataset.new ? "Add" : "Save");
         if (r.error) { m.className = "msg bad2"; m.textContent = r.error; return; }
         if (!r.ok) { m.className = "msg bad2"; m.textContent = "Saved, but the machine is not ready: " + (r.m || ""); return; }
+        hide();
         hosts();
       };
     }
   };
-
+  const hosts = async () => {
+    cfg = await get("/api/cfg");
+    show("Machines", "hosts");
+    const P0 = B, hs = cfg.hosts, hl = hs.some((h) => h.id === "local");
+    const S0 = A.S || {}, busyN = {};
+    for (const v of Object.values(S0.ln || {})) { const k = String(v).split("#")[0]; busyN[k] = (busyN[k] || 0) + 1; }
+    const row = (h) => {
+      const up = S0.o?.net?.[h.id] !== false, st = (S0.hst || {})[h.id] || {}, on = h.on_ !== 0;
+      const dk = Array.isArray(st.disk) ? st.disk : null, mem = Array.isArray(st.mem) ? st.mem : null;
+      const c = (v) => `<td class="n">${v == null ? `<span class="mut">–</span>` : v}</td>`;
+      return `<tr data-h="${esc(h.id)}" class="${on ? "" : "dim"}"><td><b><i class="dot2 ${!on ? "" : up ? "up" : "dn"}"></i>${esc(h.id === "local" ? "This computer" : h.id)}</b><span class="mut">${!on ? "Off" : up ? "Online" : "Offline"}${h.ssh ? " · " + esc(h.ssh) : ""} · ${h.dk === 0 ? "directly" : "Docker"}</span></td>${c(`${busyN[h.id] || 0}/${h.ln || 1}`)}${c(st.load != null ? Number(st.load).toFixed(1) : null)}${c(st.cpu != null ? st.cpu : null)}${c(mem ? Math.round((mem[0] - mem[1]) / 1024 * 10) / 10 + ` <span class="mut">/ ${Math.round(mem[0] / 1024)} GB</span>` : null)}${c(dk ? Math.round(dk[1]) + ` <span class="mut">GB</span>` : null)}${c(st.temp ? Math.round(st.temp) + ` <span class="mut">°C</span>` : null)}${c(st.up ? esc(String(st.up).split(",")[0]) : null)}</tr>`;
+    };
+    const on = hs.filter((h) => h.on_ !== 0), upn = on.filter((h) => S0.o?.net?.[h.id] !== false).length;
+    P0.innerHTML = ph(`${upn} of ${on.length} active machines online. Jobs run in parallel lanes on each machine.`, `<button type="button" class="go" id="hAdd">Add a machine</button>`)
+      + (hs.length ? `<div class="tw"><table class="tb2 mtb"><thead><tr><th>Machine</th><th class="n">Lanes busy</th><th class="n">Load</th><th class="n">Cores</th><th class="n">Memory</th><th class="n">Disk free</th><th class="n">Temp</th><th class="n">Up</th></tr></thead><tbody>${hs.map(row).join("")}</tbody></table></div>` : `<div class="emp"><b>No machine yet</b><span>Add this computer or an SSH machine.</span></div>`);
+    for (const t of P0.querySelectorAll("tr[data-h]")) t.onclick = () => {
+      const h = hs.find((x) => x.id === t.dataset.h); if (!h) return;
+      show(h.id === "local" ? "This computer" : h.id, "hdr");
+      B.innerHTML = hform(h, false);
+      hbind(B, hs);
+    };
+    $("hAdd").onclick = () => { show("Add a machine", "hdr"); B.innerHTML = (hl ? "" : hform({ id: "local", dk: 1 }, true)) + hform({ id: "", dk: 1 }, true); hbind(B, hs); };
+  };
   const RK = { architect: [["architect", "Model"]], scout: [["scout", "Model"]], guard: [["guard", "Model"]], vet: [["vet", "Model"]], watcher: [["watcher", "Model"]], hunter: [["hunter", "Model"]], reviewer: [["reviewer", "Model"]], repro: [["repro", "First try"], ["repro2", "Second try"]], fixer: [["fixer", "Model"], ["big", "Complex bugs"]], design_fixer: [["design_fixer", "Model"]], tester: [["tester", "Model"]], desk: [["desk", "Model"]] };
   const TOOLS = ["architect", "hunter", "repro", "fixer", "design_fixer", "tester"];
   const split = (v) => { const i = (v || "").indexOf(":"), p = i > 0 ? v.slice(0, i) : ""; return cfg.prov.some((x) => x.id === p) ? [p, v.slice(i + 1)] : ["cc", v || ""]; };
@@ -254,7 +291,7 @@
     show((window.AO.NM?.[w] || w) + " · model", "role");
     const s = cfg.set, ks = RK[w];
     const popt = (sel) => cfg.prov.map((p) => `<option value="${p.id}" ${p.id === sel ? "selected" : ""}>${esc(p.nm)}${p.has ? "" : " (no key yet)"}</option>`).join("");
-    B.innerHTML = `<form id="fr">${ks.map(([k, l]) => { const [p, m] = split(s.md[k]); return `<div class="sec"><h4>${esc(l)}</h4><div class="box" data-k="${k}"><div class="fm" style="margin:0">
+    B.innerHTML = `<form id="fr">${ks.map(([k, l]) => { const [p, m] = split(s.md[k]); return `<div class="sec"><h4>${esc(l)}</h4><div class="box" data-k="${k}"><div class="fm">
         <label>Provider</label><select data-p>${popt(p)}</select>
         <label>Model</label><input type="text" data-m list="dl-${k}" value="${esc(m)}" placeholder="model id"><datalist id="dl-${k}"></datalist>
         <div class="hint" data-h></div>
@@ -307,36 +344,36 @@
     const vg = (x, y) => { const a = String(x || "").replace(/^v/, "").split(".").map(Number), b = String(y || "").replace(/^v/, "").split(".").map(Number); for (let i = 0; i < 3; i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0); return false; };
     const nu = u.ready && vg(u.ready, A.S?.v);
     const ust = nu ? `Update ${esc(u.ready)} is downloaded.` : u.err ? `Last check: ${esc(u.err)}` : u.latest ? `Latest release: ${esc(u.latest)}` : "Not checked yet.";
-    const TB = [["gen", "General"], ["md", "Models"], ["prov", "Providers"], ["ntf", "Notifications"], ["int", "Integrations"], ["sys", "System"]];
+    const TB = [["gen", "General"], ["app", "Appearance"], ["md", "Models"], ["prov", "Providers"], ["ntf", "Notifications"], ["int", "Integrations"], ["sys", "System"]];
     let tb = "gen";
     try { tb = localStorage.getItem("ao.st") || "gen"; } catch {}
     if (!TB.some(([k]) => k === tb)) tb = "gen";
     B.innerHTML = `<div class="tabs stb" role="tablist">${TB.map(([k, l]) => `<button type="button" role="tab" data-tb="${k}">${l}</button>`).join("")}</div><form id="fs">
-      <div data-tab="prov" class="sec"><h4>Providers</h4><div class="box"><div class="fm" style="margin:0">
+      <div data-tab="prov" class="sec"><h4>Providers</h4><div class="box"><div class="fm">
         ${keys.map((p) => `<label>${esc(p.nm)}</label><input type="password" autocomplete="off" data-key="${p.id}" placeholder="${p.has ? "saved · type to replace, clear with a single space" : "API key"}">`).join("")}
         <label>Claude Code token</label><input type="password" autocomplete="off" data-key="cc" placeholder="${cfg.prov.find((p) => p.id === "cc").tok ? "saved · type to replace, clear with a single space" : "optional, from claude setup-token"}">
         <label>or keychain item</label><input type="text" name="cckc" value="${esc(s.prov?.cc?.kc || "")}" placeholder="optional, macOS keychain service name">
-        <div class="hint">Without a token Claude Code uses its own login on this computer.</div>
         <label>Ollama address</label><input type="text" name="ollama" value="${esc(s.prov?.ollama?.base || "")}" placeholder="${esc(ol.dbase)}">
         <label>Ollama context</label><input type="number" name="octx" min="2048" step="1024" value="${s.prov?.ollama?.ctx || 32768}"><div class="hint">Tokens per request. Ollama's default of 4096 is too small for the workers.</div>
-        <div class="hint">Keys are stored encrypted on this computer. Claude Code and Codex use their own CLI logins. Pick a model per worker under Models below.</div>
       </div></div></div>
-      <div data-tab="md" class="sec"><h4>Models</h4><div class="box"><div class="fm" style="margin:0">
+      <div data-tab="md" class="sec"><h4>Bug-fix team</h4><p class="mut sdesc">Models of the built-in team. People you hired for pipelines get their model on the <a href="#/team">Team</a> page.</p><div class="box"><div class="fm">
         ${["desk", "architect", "scout", "guard", "vet", "hunter", "repro", "fixer", "design_fixer", "tester", "reviewer", "watcher"].map((w) => `<label>${esc(A.NM?.[w] || w)}</label><div class="ck"><span style="flex:1">${RK[w].map(([k, l]) => esc((RK[w].length > 1 ? l + ": " : "") + (A.mdn ? A.mdn(s.md[k]) : s.md[k]))).join(" · ")}</span><button type="button" data-role="${w}">Change</button></div>`).join("")}
-        <div class="hint">Also reachable with the gear on each worker's card.</div>
       </div></div></div>
       <div data-tab="gen" class="sec"><h4>Sign in</h4><div class="box">${cfg.google ? `<div class="ck"><b class="ok2">Google</b> ${esc(cfg.google)} can sign in.</div><div class="acts"><button type="button" class="dng" id="gu">Disconnect Google</button></div>` : `<div class="ck">Sign in with a one-time link from <code>apollo-office login-link</code>, or connect a Google account.</div><div class="acts"><button type="button" id="gl">Connect Google account</button></div>`}</div></div>
-      <div data-tab="gen" class="sec"><h4>Work</h4><div class="box"><div class="fm" style="margin:0">
-        <label>Hunters</label><input type="number" name="hunters" min="0" max="12" value="${s.hunters}"><div class="hint">How many bug hunts may run at once (only in repos with hunting on).</div>
-        <label>Daily token limit</label><input type="number" name="tokday" min="0" value="${s.tokday}"><div class="hint">0 = no limit. The office always pauses when a provider reports a usage limit.</div>
+      <div data-tab="gen" class="sec"><h4>Work</h4><div class="box"><div class="fm">
+        <label>Hunters</label><input type="number" name="hunters" min="0" max="12" value="${s.hunters}">
+        <label>Daily token limit</label><input type="number" name="tokday" min="0" value="${s.tokday}"><div class="hint">0 = no limit.</div>
         <label>Front desk</label>${tg("orch", s.orch, "turn on the front desk orchestrator")}<div class="hint">Off by default. When on, the boss at the entrance takes requests in the chat, can put work on every worker at once, and runs multi-milestone app projects (Architect, Builder). While off, project work waits in the queue.</div>
-        <label>Working hours</label><div class="acts" style="margin:0;align-items:center">${tg("whon", s.wh?.on, "only work from")}<input type="time" name="whf" value="${esc(s.wh?.from || "08:00")}" style="width:auto"> to <input type="time" name="wht" value="${esc(s.wh?.to || "22:00")}" style="width:auto"></div><div class="hint">Outside these hours the office pauses; running steps finish first. Times of this computer.</div>
+        <label>Working hours</label><div class="acts" style="margin:0;align-items:center">${tg("whon", s.wh?.on, "only work from")}<input type="time" name="whf" aria-label="Start time" value="${esc(s.wh?.from || "08:00")}"> to <input type="time" name="wht" aria-label="End time" value="${esc(s.wh?.to || "22:00")}"></div>
       </div></div></div>
-      <div data-tab="gen" class="sec"><h4>Appearance</h4><div class="box"><div class="fm" style="margin:0">
-        <label>Theme</label><select id="thm"><option value="dark">Dark</option><option value="light">Light</option><option value="system">Like the system</option></select>
-        <div class="hint">Saved in this browser.</div>
+      <div data-tab="app" class="sec"><h4>Appearance</h4><div class="box"><div class="fm">
+        <label>Style</label><div class="thc" id="tys">${[["calm", "Calm", "Quiet and roomy, soft corners"], ["dense", "Dense", "More rows per screen, numbers in mono"], ["pixel", "Pixel", "Square and bold, like the office"]].map(([v, l, d]) => `<button type="button" data-v="${v}" class="ty-${v}"><span class="pv"><i></i><i></i><i></i></span><b>${l}</b><span>${d}</span></button>`).join("")}</div>
+        <label>Theme</label><div class="seg" id="thm">${[["dark", "Dark"], ["light", "Light"], ["system", "Like the system"]].map(([v, l]) => `<button type="button" data-v="${v}">${l}</button>`).join("")}</div>
+        <label>Accent</label><div class="sw2" id="acc">${window.TH.AC.map((k) => `<button type="button" data-v="${k}" title="${k}" aria-label="${k}" class="a-${k}"></button>`).join("")}</div>
+        <label>Density</label><div class="seg" id="dns">${[["cozy", "Comfortable"], ["compact", "Compact"]].map(([v, l]) => `<button type="button" data-v="${v}">${l}</button>`).join("")}</div>
+        <label>Motion</label><div class="seg" id="rmo">${[["0", "Full"], ["1", "Reduced"]].map(([v, l]) => `<button type="button" data-v="${v}">${l}</button>`).join("")}</div>
       </div></div></div>
-      <div data-tab="ntf" class="sec"><h4>Notifications</h4><div class="box"><div class="fm" style="margin:0">
+      <div data-tab="ntf" class="sec"><h4>Notifications</h4><div class="box"><div class="fm">
         <label>In this browser</label><label class="ck"><input type="checkbox" id="bnt"> show a desktop notification when a pull request waits for review</label>
         <div class="hint" id="bnh">Only while this tab is open somewhere.</div>
         <label>ntfy topic URL</label><input type="text" name="ntfy" value="${esc(s.ntfy)}" placeholder="https://ntfy.sh/your-secret-topic">
@@ -344,22 +381,26 @@
       </div><div class="acts"><button type="button" id="bt">Send test</button></div></div></div>
       <div data-tab="int" class="sec"><h4>API</h4><div class="box">
         <div class="ck">${cfg.api.on ? `<b class="ok2">On</b> token created ${new Date(cfg.api.t0).toLocaleDateString()}${cfg.api.last ? ", last used " + new Date(cfg.api.last).toLocaleString() : ", not used yet"}` : "Off. Create a token to send bug reports from your own tools (error trackers, CI, scripts)."}</div>
-        <div id="atk" hidden><input type="text" readonly id="atv" style="margin-top:8px"><div class="hint" style="margin-top:6px">Copy it now, it is shown only once.</div></div>
-        <pre class="df" style="margin-top:8px;white-space:pre-wrap">curl -X POST http://127.0.0.1:${cfg.api.port}/v1/report \\
+        <div id="atk" hidden><input type="text" readonly id="atv"><div class="hint">Copy it now, it is shown only once.</div></div>
+        <pre class="df" style="white-space:pre-wrap">curl -X POST http://127.0.0.1:${cfg.api.port}/v1/report \\
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \\
   -d '{"repo":"owner/name","title":"Crash on empty input","body":"Steps and what happens","logs":"stack trace","src":"Sentry"}'</pre>
-        <div class="hint">Or send <code>{"repo":"owner/name","issue":42}</code> to have an existing issue picked up now. <code>GET /v1/report?id=…</code> returns the state and the PR link. Reports go through Guard and Vet like issues; only this computer can reach the API.</div>
         <div class="acts"><button type="button" id="an">${cfg.api.on ? "Replace token" : "Create token"}</button>${cfg.api.on ? `<button type="button" class="dng" id="ao">Revoke</button>` : ""}</div></div></div>
+      <div data-tab="int" class="sec"><h4>API and MCP</h4><div class="box">
+        <div id="tkl"></div>
+        <div class="acts"><input type="text" id="tkn" placeholder="Name, e.g. Claude Code" maxlength="40" style="flex:1;min-width:160px"><select id="tks" style="width:auto"><option value="write">Can change things</option><option value="read">Read only</option></select><button type="button" class="go" id="tkc">Create token</button></div>
+        <div id="tkv" hidden><input type="text" readonly id="tkt"><div class="hint">Copy it now, it is shown only once.</div></div>
+        <pre class="df" style="white-space:pre-wrap">curl http://127.0.0.1:${cfg.api.port}/v2/status -H "Authorization: Bearer $TOKEN"</pre>
+        <div class="hint"><code>GET /v2/openapi.json</code> · MCP</div>
+        <pre class="df" style="white-space:pre-wrap" id="tkm"></pre></div></div>
       <div data-tab="int" class="sec"><h4>Error trackers</h4><div class="box">
         <div class="ck">${cfg.hook.on ? `<b class="ok2">On</b> link created ${new Date(cfg.hook.t0).toLocaleDateString()}` : "Off. Create a link to let Sentry or GlitchTip send errors as reports."}</div>
-        <div id="htk" hidden><input type="text" readonly id="htv" style="margin-top:8px"><div class="hint" style="margin-top:6px">Copy it now, the key is shown only once. Replace owner/name with the repository.</div></div>
-        <div class="hint" style="margin-top:6px">Sentry: add an internal integration with this webhook URL and alert rule actions. GlitchTip: add it as a webhook alert. The office has to be reachable from the internet for this, for example through a tunnel; use that address instead of 127.0.0.1. The same error goes into one report. Senders that can set headers can pass the key as <code>X-Hook-Key</code> instead of in the URL. The key can only create reports; replace the link if it leaks.</div>
-        <div class="hint">GitHub Actions: a failed run can report itself with <code>cute-johnny/ApolloOfficeImproved/report</code>, see the README.</div>
+        <div id="htk" hidden><input type="text" readonly id="htv"><div class="hint">Copy it now, the key is shown only once. Replace owner/name with the repository.</div></div>
         <div class="acts"><button type="button" id="hn">${cfg.hook.on ? "Replace link" : "Create link"}</button>${cfg.hook.on ? `<button type="button" class="dng" id="ho">Revoke</button>` : ""}</div></div></div>
       <div data-tab="sys" class="sec"><h4>Updates</h4><div class="box">${tg("updates", s.updates, "install updates automatically when the office is idle")}<div class="msg" id="um">${ust}</div><div class="acts"><button type="button" id="uc">Check now</button>${nu ? `<button type="button" class="pri" id="ua">Install and restart</button>` : ""}</div></div></div>
       <div data-tab="sys" class="sec"><h4>Export and import</h4><div class="box"><div class="ck">Settings, repositories, machines and models as a JSON file. API keys, tokens, logins and notification addresses are not included.</div>
         <div class="acts"><button type="button" id="ex">Export</button><button type="button" id="im">Import…</button><input type="file" id="imf" accept="application/json,.json" hidden></div><div class="msg" id="xm"></div></div></div>
-      <div data-tab="sys" class="sec"><h4>This installation</h4><div class="box"><div class="fm" style="margin:0">
+      <div data-tab="sys" class="sec"><h4>This installation</h4><div class="box"><div class="fm">
         <label>Start at login</label>${tg("auto", cfg.auto, "start ApolloOffice when I log in")}
         <label>Data folder</label><span class="mono" style="font-size:12px;word-break:break-all">${esc(cfg.data)}</span>
         <label>Version</label><span class="mono" style="font-size:12px">${esc(A.S?.v || "")} · ${esc(cfg.asset)}</span>
@@ -369,7 +410,7 @@
         <div class="dzr"><div><b>Sign out everywhere</b><div class="hint">Ends every session, including this one. You need a new link from <code>apollo-office login-link</code>.</div></div><button type="button" class="dng" data-dz="logout">Sign out everywhere</button></div>
         <div class="dzr"><div><b>Clear job history</b><div class="hint">Deletes finished and dropped jobs and their log. Pull requests, costs and the milestones of unfinished projects stay.</div></div><button type="button" class="dng" data-dz="history">Clear history</button></div>
         <div class="dzr"><div><b>Reset settings</b><div class="hint">Models, limits, budgets, notifications and paused workers go back to defaults. Keys, repositories and machines stay.</div></div><button type="button" class="dng" data-dz="reset">Reset settings</button></div>
-        <div class="dzr"><div><b>Delete all data</b><div class="hint">Deletes repositories, machines, jobs, projects, pull request history, costs, settings and stored API keys. Nothing on GitHub changes. Type <code>delete</code> to confirm.</div><input type="text" id="dzw" placeholder="delete" autocomplete="off" style="margin-top:6px;max-width:160px"></div><button type="button" class="dng" data-dz="wipe">Delete everything</button></div>
+        <div class="dzr"><div><b>Delete all data</b><div class="hint">Deletes repositories, machines, jobs, projects, pull request history, costs, settings and stored API keys. Nothing on GitHub changes. Type <code>delete</code> to confirm.</div><input type="text" id="dzw" placeholder="delete" autocomplete="off" style="max-width:160px"></div><button type="button" class="dng" data-dz="wipe">Delete everything</button></div>
         <div class="msg" id="dzm"></div></div></div>`;
     const stab = (k) => {
       tb = k;
@@ -379,13 +420,17 @@
     };
     for (const b of B.querySelectorAll("[data-tb]")) b.onclick = () => stab(b.dataset.tb);
     stab(tb);
-    const ign = new Set(["thm", "bnt", "imf", "atv", "htv", "dzw"]);
+    const ign = new Set(["thm", "tys", "bnt", "imf", "atv", "htv", "dzw"]);
     const dirty = (e) => { if (ign.has(e.target.id)) return; $("sbar").hidden = false; $("sbar").className = "sbar"; $("sm").className = ""; $("sm").textContent = "Unsaved changes"; };
     $("fs").addEventListener("input", dirty);
     $("fs").addEventListener("change", dirty);
     $("sx").onclick = () => settings();
-    $("thm").value = window.TH.get();
-    $("thm").onchange = (e) => window.TH.set(e.target.value);
+    const seg = (id, cur, fn) => { const el = $(id); for (const b of el.querySelectorAll("[data-v]")) { b.classList.toggle("on", b.dataset.v === cur); b.onclick = () => { fn(b.dataset.v); for (const x of el.querySelectorAll("[data-v]")) x.classList.toggle("on", x === b); }; } };
+    seg("thm", window.TH.get(), (v) => window.TH.set(v));
+    seg("acc", window.TH.pref("ac", "raspberry"), (v) => window.TH.setPref("ac", v));
+    seg("tys", window.TH.pref("ty", "calm"), (v) => { window.TH.setPref("ty", v); const a = window.TH.TY[v]; window.TH.setPref("ac", a); for (const x of $("acc").querySelectorAll("[data-v]")) x.classList.toggle("on", x.dataset.v === a); });
+    seg("dns", window.TH.pref("dn", "cozy"), (v) => window.TH.setPref("dn", v));
+    seg("rmo", window.TH.pref("rm", "0"), (v) => window.TH.setPref("rm", v));
     try { $("bnt").checked = localStorage.getItem("ao.nt") === "1" && "Notification" in window && Notification.permission === "granted"; } catch {}
     if (!("Notification" in window)) { $("bnt").disabled = true; $("bnh").textContent = "This browser does not support notifications."; }
     $("bnt").onchange = async (e) => {
@@ -455,6 +500,14 @@
       await settings();
       $("atk").hidden = false; $("atv").value = r.tok; $("atv").select();
     };
+    const tk = async (r) => {
+      const d = r || await get("/api/toks");
+      $("tkl").innerHTML = (d.toks || []).length ? `<div class="tw"><table class="tb2 ro"><thead><tr><th>Name</th><th>Access</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody>${d.toks.map((t) => `<tr><td>${esc(t.n)}</td><td>${t.sc === "read" ? "read only" : "can change"}</td><td>${new Date(t.t0).toLocaleDateString()}</td><td>${t.last ? new Date(t.last).toLocaleString() : "never"}</td><td class="n"><button type="button" class="dng sm2" data-tkd="${esc(t.id)}">Revoke</button></td></tr>`).join("")}</tbody></table></div>` : `<div class="hint">No tokens yet.</div>`;
+      if (d.mcp) $("tkm").textContent = `claude mcp add apollo-office -e APOLLO_OFFICE_TOKEN=$TOKEN -- ${d.mcp.replace(" --token <token>", "")}\n\nor over HTTP: http://127.0.0.1:${cfg.api.port}/mcp with header Authorization: Bearer $TOKEN`;
+      for (const b of $("tkl").querySelectorAll("[data-tkd]")) b.onclick = async (e) => { if (e.target.dataset.sure !== "1") { e.target.dataset.sure = "1"; e.target.textContent = "Click again"; return; } tk(await post({ op: "del", id: b.dataset.tkd }, "/api/toks")); };
+    };
+    tk();
+    $("tkc").onclick = async () => { const r = await post({ op: "new", n: $("tkn").value, sc: $("tks").value }, "/api/toks"); if (!r.token) return; $("tkn").value = ""; $("tkv").hidden = false; $("tkt").value = r.token; $("tkt").select(); tk(r); };
     $("hn").onclick = async (e) => {
       if (cfg.hook.on && e.target.dataset.sure !== "1") { e.target.dataset.sure = "1"; e.target.textContent = "Click again, the old link stops working"; return; }
       const r = await post({ op: "new" }, "/api/hooktok");
@@ -473,38 +526,42 @@
     if (c.error) return;
     show("Costs", "cost");
     const t = c.today || {}, px = c.px || {};
-    const tb = (h, rs) => `<div class="tw"><table class="tb"><tr>${h.map((x) => `<th class="${x[1] || ""}">${x[0]}</th>`).join("")}</tr>${rs.join("")}</table></div>`;
+    const tb = (h, rs) => `<div class="tw"><table class="tb2 ro"><thead><tr>${h.map((x) => `<th class="${x[1] || ""}">${x[0]}</th>`).join("")}</tr></thead><tbody>${rs.join("")}</tbody></table></div>`;
     const rate = (a, b) => b ? Math.round(100 * a / b) + "%" : "–";
-    B.innerHTML = `<div class="sec"><h4>Today</h4><div class="box"><div class="ck"><b>${usd(t.usd || 0)}</b>&nbsp;API keys${t.val ? ` · ${usd(t.val)} value on Claude Code and Codex logins` : ""}${t.unk ? ` · ${t.unk} calls without a known price` : ""}</div>
-        <form id="fb" class="fm"><label>Daily budget</label><input type="number" name="budday" min="0" step="0.01" value="${c.budday || 0}"><div class="hint">USD for API keys, 0 = no limit. When it is used up the office pauses until midnight and notifies you. Logins with a subscription do not count. Per repository under Repos.</div></form>
-        <div class="acts"><button class="pri" id="bb">Save</button></div><div class="msg" id="bm"></div></div></div>
-      ${c.hints.length ? `<div class="sec"><h4>Hints</h4>${c.hints.map((h) => `<div class="box"><div class="ck">${esc(h)}</div></div>`).join("")}</div>` : ""}
-      <div class="sec"><h4>Last 14 days</h4>${c.days.length ? tb([["Day"], ["API", "n"], ["Login value", "n"]], c.days.map((d) => `<tr><td>${esc(d.day)}</td><td class="n">${usd(d.usd)}</td><td class="n">${usd(d.val)}</td></tr>`)) : `<div class="empty">Nothing yet.</div>`}</div>
-      <div class="sec"><h4>Repositories, 30 days</h4>${c.repos.length ? tb([["Repository"], ["Jobs", "n"], ["API", "n"], ["Login value", "n"]], c.repos.map((r) => `<tr><td>${esc(r.repo)}</td><td class="n">${r.jobs}</td><td class="n">${usd(r.usd)}</td><td class="n">${usd(r.val)}</td></tr>`)) : `<div class="empty">Nothing yet.</div>`}</div>
-      <div class="sec"><h4>Models per worker, 90 days</h4>${c.stats.length ? tb([["Repository"], ["Worker"], ["Model"], ["Jobs", "n"], ["PRs", "n"], ["Merged", "n"], ["Rejected", "n"], ["Per job", "n"], ["Per merge", "n"]], c.stats.map((r) => `<tr><td>${esc(r.repo)}</td><td>${esc(A.NM?.[r.w] || r.w)}</td><td>${esc(r.nm)}${r.sub ? " (login)" : ""}</td><td class="n">${r.jobs}</td><td class="n">${r.prs}</td><td class="n">${r.mg} · ${rate(r.mg, r.prs)}</td><td class="n">${r.cl}</td><td class="n">${usd(r.usd == null ? null : r.usd / r.jobs)}</td><td class="n">${r.mg && r.usd != null ? usd(r.usd / r.mg) : "–"}</td></tr>`)) : `<div class="empty">Nothing yet.</div>`}<div class="hint" style="margin-top:6px">A job counts for every worker that worked on it. Hints show up once two models did at least 5 jobs each for the same worker. The office never switches models by itself.</div></div>
-      <div class="sec"><h4>Prices</h4><div class="box"><textarea id="px" placeholder="model input output, e.g. gpt-5.5 5 30" style="min-height:70px">${esc(Object.entries(px).map(([k, v]) => k + " " + v.join(" ")).join("\n"))}</textarea><div class="hint" style="margin-top:6px">USD per million tokens, one model per line: <code>model input output</code> or <code>model input cache-write cache-read output</code>. Overrides the built-in prices. Claude Code reports its own cost.</div><div class="acts"><button id="pb">Save prices</button></div><div class="msg" id="pm"></div></div></div>`;
+    const d14 = c.days.reduce((s, d) => s + (d.usd || 0), 0), v14 = c.days.reduce((s, d) => s + (d.val || 0), 0);
+    const dm = new Map(c.days.map((d) => [d.day, d])), d0 = [new Date().toISOString().slice(0, 10), c.days[0]?.day || ""].sort().pop(), dd = c.days.length ? Array.from({ length: 14 }, (_, i) => { const k = new Date(Date.parse(d0 + "T00:00:00Z") - (13 - i) * 864e5).toISOString().slice(0, 10); return dm.get(k) || { day: k, usd: 0, val: 0 }; }) : [], mx = Math.max(0.01, ...dd.map((d) => (d.usd || 0) + (d.val || 0)));
+    const nil = `<div class="emp"><b>Nothing yet</b><span>Costs show up after the first jobs ran.</span></div>`;
+    B.innerHTML = ph(`API keys are billed per token. Claude Code and Codex logins cost nothing extra, their value is shown for comparison.${t.unk ? ` ${t.unk} calls today had no known price.` : ""}`)
+      + kpi([[usd(t.usd || 0), "API today"], [usd(t.val || 0), "login value today"], [usd(d14), "API, 14 days"], [c.budday ? usd(c.budday) : "none", "daily budget"]])
+      + (c.hints.length ? `<section class="sec2"><h3>Cheaper models <span class="mut">${c.hints.length} ${c.hints.length === 1 ? "hint" : "hints"}</span></h3><div class="lst">${c.hints.slice(0, 3).map((h) => `<div class="hr2"><div><span class="t1">${esc(h)}</span></div></div>`).join("")}${c.hints.length > 3 ? `<details class="more"><summary>Show ${c.hints.length - 3} more</summary>${c.hints.slice(3).map((h) => `<div class="hr2"><div><span class="t1">${esc(h)}</span></div></div>`).join("")}</details>` : ""}</div></section>` : "")
+      + `<section class="sec2"><h3>Last 14 days <span class="mut">${usd(d14)} API · ${usd(v14)} login value</span></h3>${dd.length ? `<div class="cch" role="img" aria-label="Daily cost, last 14 days: ${esc(dd.map((d) => `${d.day.slice(5)} ${usd(d.usd)} API, ${usd(d.val)} login`).join("; "))}">${dd.map((d) => `<div title="${esc(d.day)}: ${usd(d.usd)} API, ${usd(d.val)} login value"><i class="v" style="height:${((d.val || 0) / mx) * 100}%"></i><i class="u" style="height:${((d.usd || 0) / mx) * 100}%"></i><span>${esc(d.day.slice(8))}</span></div>`).join("")}</div><div class="lgd"><span><i class="u"></i>API</span><span><i class="v"></i>Login value</span></div>` : nil}</section>`
+      + `<section class="sec2"><h3>Pipelines <span class="mut">30 days</span></h3>${(c.flows || []).length ? tb([["Pipeline"], ["Runs", "n"], ["API", "n"], ["Login value", "n"], ["Per run", "n"]], c.flows.map((f) => `<tr><td>${esc(f.n || f.flow)}</td><td class="n">${f.runs}</td><td class="n">${usd(f.usd)}</td><td class="n">${usd(f.val)}</td><td class="n">${f.runs ? usd(((f.usd || 0) + (f.val || 0)) / f.runs) : "–"}</td></tr>`)) : `<div class="emp"><b>No pipeline costs yet</b><span>Costs of pipeline steps show up here after their first runs.</span></div>`}</section>`
+      + `<section class="sec2"><h3>Repositories <span class="mut">30 days</span></h3>${c.repos.length ? tb([["Repository"], ["Jobs", "n"], ["API", "n"], ["Login value", "n"]], c.repos.map((r) => `<tr><td>${esc(r.repo)}</td><td class="n">${r.jobs}</td><td class="n">${usd(r.usd)}</td><td class="n">${usd(r.val)}</td></tr>`)) : nil}</section>`
+      + `<section class="sec2"><h3>Models per worker <span class="mut">90 days</span></h3>${c.stats.length ? tb([["Repository"], ["Worker"], ["Model"], ["Jobs", "n"], ["PRs", "n"], ["Merged", "n"], ["Rejected", "n"], ["Per job", "n"], ["Per merge", "n"]], c.stats.map((r) => `<tr><td>${esc(r.repo)}</td><td>${esc(A.NM?.[r.w] || r.w)}</td><td>${esc(r.nm)}${r.sub ? ` <span class="mut">login</span>` : ""}</td><td class="n">${r.jobs}</td><td class="n">${r.prs}</td><td class="n">${r.mg} <span class="mut">${rate(r.mg, r.prs)}</span></td><td class="n">${r.cl}</td><td class="n">${usd(r.usd == null ? null : r.usd / r.jobs)}</td><td class="n">${r.mg && r.usd != null ? usd(r.usd / r.mg) : "–"}</td></tr>`)) : nil}</section>`
+      + `<section class="sec2"><h3>Budget and prices</h3><div class="box"><form id="fb" class="fm"><label>Daily budget</label><input type="number" name="budday" min="0" step="0.01" value="${c.budday || 0}"><div class="hint">USD for API keys, 0 = no limit.</div>
+        <label>Prices</label><textarea id="px" placeholder="model input output, e.g. gpt-5.5 5 30">${esc(Object.entries(px).map(([k, v]) => k + " " + v.join(" ")).join("\n"))}</textarea><div class="hint">USD per million tokens, one model per line: <code>model input output</code> or <code>model input cache-write cache-read output</code>. Overrides the built-in prices. Claude Code reports its own cost.</div></form>
+        <div class="acts"><button class="pri" id="bb">Save</button><span class="msg" id="bm"></span></div></div></section>`;
     $("fb").onsubmit = (e) => e.preventDefault();
-    $("bb").onclick = async () => { const r = await post({ budday: Number($("fb").budday.value) }, "/api/set"); $("bm").className = r.error ? "msg bad2" : "msg"; $("bm").textContent = r.error || "Saved."; };
-    $("pb").onclick = async () => {
+    $("bb").onclick = async () => {
       const o = {}, bad = [];
       for (const l of $("px").value.split("\n").map((x) => x.trim()).filter(Boolean)) {
         const [k, ...v] = l.split(/\s+/), n = v.map(Number);
         if ((n.length === 2 || n.length === 4) && n.every((x) => isFinite(x) && x >= 0)) o[k] = n; else bad.push(k);
       }
-      if (bad.length) { $("pm").className = "msg bad2"; $("pm").textContent = "Check the line for " + bad.join(", "); return; }
-      const r = await post({ px: o }, "/api/set");
-      $("pm").className = r.error ? "msg bad2" : "msg"; $("pm").textContent = r.error || "Saved.";
+      if (bad.length) { $("bm").className = "msg bad2"; $("bm").textContent = "Check the price line for " + bad.join(", "); return; }
+      const r = await post({ budday: Number($("fb").budday.value), px: o }, "/api/set");
+      $("bm").className = r.error ? "msg bad2" : "msg"; $("bm").textContent = r.error || "Saved.";
     };
   };
 
   const health = async (f) => {
     show("Health", "health");
-    if (!A.H || f) { B.innerHTML = `<div class="empty">checking…</div>`; await A.hlt(f); }
+    if (!A.H || f) { B.innerHTML = `<div class="empty">Checking…</div>`; await A.hlt(f); }
     const H = A.H || {};
-    const row = (ok, k, m) => `<div class="ck" style="margin:4px 0;align-items:flex-start"><b class="${ok ? "ok2" : "bad2"}" style="min-width:56px">${ok ? "ok" : "problem"}</b><span><b>${esc(k)}</b> ${esc(m)}</span></div>`;
-    const sec = (t, x) => `<div class="sec"><h4>${t}</h4><div class="box">${x}</div></div>`;
+    const row = (ok, k, m) => `<div class="hr2"><i class="dot2 ${ok ? "up" : "dn"}"></i><div><b>${esc(k || (ok ? "OK" : "Problem"))}</b><span>${esc(m)}</span></div></div>`;
+    const sec = (t, x) => `<section class="sec2"><h3>${t}</h3><div class="lst">${x}</div></section>`;
     const ls = (v) => (Array.isArray(v.m) ? v.m.map((y) => row(y.ok, y.k, y.m)).join("") : row(v.ok, "", v.m));
-    B.innerHTML = H.gh ? sec("GitHub", row(H.gh.ok, "", H.gh.m)) + sec("AI providers in use", ls(H.ai)) + sec("Docker", row(H.docker.ok, "", H.docker.m)) + sec("Machines", ls(H.hosts)) + `<div class="msg">Checked ${new Date(H.t).toLocaleTimeString()}. The office checks again every 5 minutes.</div><div class="acts"><button id="hr">Check now</button></div>` : `<div class="empty">Could not check.</div><div class="acts"><button id="hr">Check now</button></div>`;
+    B.innerHTML = ph(H.t ? `Checked ${new Date(H.t).toLocaleTimeString()}. The office checks again every 5 minutes.` : "", `<button id="hr">Check now</button>`) + (H.gh ? sec("GitHub", row(H.gh.ok, "", H.gh.m)) + sec("AI providers in use", ls(H.ai)) + sec("Docker", row(H.docker.ok, "", H.docker.m)) + sec("Machines", ls(H.hosts)) : `<div class="emp"><b>Could not check</b></div>`);
     $("hr").onclick = () => health(true);
   };
   A.health = health;
@@ -538,7 +595,7 @@
       ${msSummaryHtml}${repHtml}${artHtml}
       <div class="sec"><h4>Diff</h4>${dview(j.df)}</div>
       <div class="acts"><button class="pri" id="ba">Submit pull request</button><button class="dng" id="bd">Drop</button></div><div class="msg" id="jm"></div>
-      <div class="sec" style="margin-top:20px"><h4>Log</h4><div class="log">${ev}</div></div>`;
+      <div class="sec"><h4>Log</h4><div class="log">${ev}</div></div>`;
       const opBtn = B.querySelector("[data-openproj]");
       if (opBtn) opBtn.onclick = () => projects();
       $("ba").onclick = async () => {
@@ -553,7 +610,7 @@
       };
       return;
     }
-    let nq = null;
+let nq = null;
     try { nq = typeof j.question_json === "string" ? JSON.parse(j.question_json) : j.question_json; } catch {}
     const needBox = j.st === "need_user" ? `<div class="sec"><div class="box nqbox">
       <div class="hd2"><b>Input needed (${esc(A.NM?.[nq?.worker] || nq?.worker || "worker")})</b>${nq?.secret ? `<span class="pill warn">encrypted → $${esc(nq?.env_name || "")}</span>` : ""}</div>
@@ -615,6 +672,70 @@
     $("bp").onclick = repos;
   };
 
+  const cz = () => {
+    const P = $("cz"), F = window.AO.surf, U = window.AO.furn;
+    const close = () => { P.hidden = true; document.body.classList.remove("ed"); U.edit(false); U.on(() => {}); document.removeEventListener("keydown", esc0); };
+    const esc0 = (e) => { if (e.key === "Escape" && !U.cur().tool && $("dr").hidden) close(); };
+    if (!P.hidden) return close();
+    const NMS = { check: "Checker", plain: "Plain", planks: "Planks", tiles: "Tiles", parquet: "Parquet", carpet: "Carpet", stripes: "Stripes", panels: "Panels", brick: "Brick", dots: "Dots", boards: "Boards" };
+    const TT = { floor: "Floor", wall: "Wall" };
+    let tm;
+    const save = () => { clearTimeout(tm); tm = setTimeout(() => post({ office: { floor: F.get("floor"), wall: F.get("wall") } }, "/api/set").catch(() => {}), 400); };
+    const prev = () => { for (const b of P.querySelectorAll("[data-p]")) { const [x, y] = F.eff(b.dataset.k, true); F.pat(b.querySelector("canvas").getContext("2d"), b.dataset.p, x, y, 0, 0, 48, 24); } };
+    const sec = (k) => {
+      const f = F.get(k), [ca, cb] = F.eff(k);
+      return `<h5><span>${TT[k]}</span></h5>
+        <div class="pg">${F.pats[k].map((p) => `<button type="button" data-k="${k}" data-p="${p}" class="${f.p === p ? "on" : ""}"><canvas width="48" height="24"></canvas>${NMS[p]}</button>`).join("")}</div>
+        <div class="cl"><label><input type="color" data-k="${k}" data-c="a" value="${ca}"> Base</label><label><input type="color" data-k="${k}" data-c="b" value="${cb}"> ${k === "wall" ? "Trim" : "Pattern"}</label></div>`;
+    };
+    const draw = () => {
+      const cu = U.cur();
+      P.innerHTML = `<h5><span>Customize office</span></h5>
+        <h5><span>Room</span><b id="czSz" class="k"></b></h5>
+        <div class="cl rs"><label>Width <input type="range" id="czW" min="30" max="80"></label></div>
+        <div class="cl rs"><label>Depth <input type="range" id="czH" min="16" max="40"></label></div>
+        <h5><span>Furniture</span></h5>
+        <div class="pg fu">${Object.entries(U.cat).map(([k, f]) => `<button type="button" data-f="${k}" class="${cu.tool === k ? "on" : ""}"><canvas width="96" height="60"></canvas>${f.n}</button>`).join("")}</div>
+        <div class="ac"><button type="button" id="czU" ${cu.undo ? "" : "disabled"} title="Ctrl+Z">Undo</button><button type="button" id="czRd" ${cu.redo ? "" : "disabled"} title="Ctrl+Shift+Z">Redo</button><span class="sp"></span><button type="button" id="czClr" ${cu.n ? "" : "disabled"}>Clear all</button></div>
+        ${sec("wall")}${sec("floor")}
+        <div class="ac"><button type="button" id="czR">Reset</button><button type="button" id="czD">Done</button></div>`;
+      prev();
+      for (const b of P.querySelectorAll("[data-f]")) {
+        U.prev(b.querySelector("canvas").getContext("2d"), b.dataset.f, 96, 60);
+        let dg = false;
+        b.onpointerdown = (e) => {
+          if (e.button) return;
+          dg = false;
+          const sx = e.clientX, sy = e.clientY;
+          const mv = (ev) => { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) > 5) { dg = true; off(); U.grab(b.dataset.f); } };
+          const off = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", off); };
+          window.addEventListener("pointermove", mv);
+          window.addEventListener("pointerup", off);
+        };
+        b.onclick = () => { if (!dg) U.tool(b.dataset.f); dg = false; };
+        b.ondragstart = (e) => e.preventDefault();
+      }
+      const rm = U.room(), sz = () => { const r = U.room(); $("czSz").textContent = `${r.w} × ${r.h}`; $("czW").value = r.w; $("czH").value = r.h; };
+      $("czW").min = Math.max(30, rm.min[0]); $("czH").min = Math.max(16, rm.min[1]);
+      sz();
+      $("czW").oninput = () => { U.size(+$("czW").value, U.room().h); sz(); };
+      $("czH").oninput = () => { U.size(U.room().w, +$("czH").value); sz(); };
+      $("czU").onclick = () => U.undo();
+      $("czRd").onclick = () => U.redo();
+      $("czClr").onclick = () => { if (confirm("Remove all furniture?")) U.clear(); };
+      for (const b of P.querySelectorAll("[data-p]")) b.onclick = () => { F.set(b.dataset.k, { ...F.get(b.dataset.k), p: b.dataset.p }); save(); draw(); };
+      for (const i of P.querySelectorAll("[data-c]")) i.oninput = () => { F.set(i.dataset.k, { ...F.get(i.dataset.k), [i.dataset.c]: i.value }); save(); prev(); };
+      $("czR").onclick = () => { F.load({}); save(); draw(); };
+      $("czD").onclick = close;
+    };
+    U.on(draw);
+    U.edit(true);
+    document.body.classList.add("ed");
+    document.addEventListener("keydown", esc0);
+    draw();
+    P.hidden = false;
+  };
+  $("bCz").onclick = cz;
   let lastProjSig = "";
   const projects = async (quiet) => {
     show("Projects", "proj");
@@ -707,17 +828,29 @@
     });
   };
 
-  if ($("bProj")) $("bProj").onclick = () => projects(false);
   A.projects = projects;
-  $("bRepos").onclick = repos;
-  $("bCost").onclick = costs;
-  $("bHosts").onclick = hosts;
   A.hosts = hosts;
-  $("bSet").innerHTML = A.GEAR;
-  $("bSet").onclick = settings;
+  A.drawer = (t, html) => { show(t, "run"); B.innerHTML = html; return B; };
+  A.drawerOpen = () => !dr.hidden && cur === "run";
+  A.repos = repos;
+  A.costs = costs;
+  A.settings = settings;
   document.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "s" && !dr.hidden && cur === "set" && $("sbar") && !$("sbar").hidden) { e.preventDefault(); $("fs").requestSubmit(); }
+    if ((e.metaKey || e.ctrlKey) && e.key === "s" && cur === "set" && document.body.classList.contains("pgm") && $("sbar") && !$("sbar").hidden) { e.preventDefault(); $("fs").requestSubmit(); }
   });
+  const rowify = (root) => {
+    for (const f of root.querySelectorAll(".fm:not(.fx)")) {
+      f.classList.add("fx");
+      let c = null;
+      for (const e of [...f.children]) {
+        if (e.tagName === "LABEL" && !e.classList.contains("ck")) { const r = document.createElement("div"); r.className = "fr3"; c = document.createElement("div"); c.className = "fc3"; f.insertBefore(r, e); r.append(e, c); }
+        else if (c) c.appendChild(e);
+      }
+    }
+  };
+  const mo = new MutationObserver(() => { rowify($("pgB")); rowify($("drB")); });
+  mo.observe($("pgB"), { childList: true, subtree: true });
+  mo.observe($("drB"), { childList: true, subtree: true });
   let asked = false;
   A.onState = (s) => {
     if (!asked && (s.nr === 0 || !s.hs.length)) { asked = true; setup(); }

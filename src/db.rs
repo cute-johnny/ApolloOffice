@@ -43,6 +43,8 @@ fn mig(c: &Connection) {
     let _ = c.execute("alter table jobs add column parent_branch text default ''", []);
     let _ = c.execute("alter table jobs add column question_json text default ''", []);
     let _ = c.execute("create index if not exists jobs_proj on jobs(project_id)", []);
+    let _ = c.execute("alter table cost add column run int", []);
+    let _ = c.execute("create index if not exists cost_run on cost(run)", []);
 }
 
 pub type P = Vec<Box<dyn ToSql + Send>>;

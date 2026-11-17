@@ -59,6 +59,129 @@ pub fn defs() -> Vec<(&'static str, &'static str, Value)> {
     ]
 }
 
+pub fn allowed(r: &Rn, n: &str) -> bool {
+    match &r.tl {
+        None => !n.starts_with("gh_"),
+        Some(t) => (n == "sh" && t.iter().any(|x| x == "shell")) || (["read", "write", "edit", "grep", "ls"].contains(&n) && t.iter().any(|x| x == "files")) || (n.starts_with("gh_") && t.iter().any(|x| x == "github")),
+    }
+}
+
+fn ghd() -> Vec<(&'static str, &'static str, Value)> {
+    let rn = |extra: Value, req: &[&str]| {
+        let mut p = json!({"repo": {"type": "string", "description": "owner/name"}, "number": {"type": "number"}});
+        if let Some(o) = extra.as_object() {
+            for (k, v) in o {
+                p[k] = v.clone();
+            }
+        }
+        json!({"type": "object", "properties": p, "required": req})
+    };
+    vec![
+        ("gh_issue_view", "Read an issue with its labels and comments. Only in repositories added to the office.", rn(json!({}), &["repo", "number"])),
+        ("gh_issue_list", "List issues of a repository.", json!({"type": "object", "properties": {"repo": {"type": "string"}, "state": {"type": "string", "enum": ["open", "closed", "all"]}, "label": {"type": "string"}, "limit": {"type": "number"}}, "required": ["repo"]})),
+        ("gh_pr_view", "Read a pull request with files, reviews and comments.", rn(json!({}), &["repo", "number"])),
+        ("gh_pr_list", "List pull requests of a repository.", json!({"type": "object", "properties": {"repo": {"type": "string"}, "state": {"type": "string", "enum": ["open", "closed", "merged", "all"]}, "limit": {"type": "number"}}, "required": ["repo"]})),
+        ("gh_pr_diff", "Read the diff of a pull request.", rn(json!({}), &["repo", "number"])),
+        ("gh_search_issues", "Search issues and pull requests in the repositories added to the office.", json!({"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "number"}}, "required": ["query"]})),
+        ("gh_comment", "Comment on an issue or pull request. Only in repositories added to the office. Posted under the owner's account with an AI note.", rn(json!({"body": {"type": "string"}}), &["repo", "number", "body"])),
+        ("gh_label", "Add or remove labels on an issue or pull request. Only in repositories added to the office.", rn(json!({"add": {"type": "array", "items": {"type": "string"}}, "remove": {"type": "array", "items": {"type": "string"}}}), &["repo", "number"])),
+        ("gh_issue_create", "Open a new issue. Only in repositories added to the office. Posted under the owner's account with an AI note.", json!({"type": "object", "properties": {"repo": {"type": "string"}, "title": {"type": "string"}, "body": {"type": "string"}, "labels": {"type": "array", "items": {"type": "string"}}}, "required": ["repo", "title", "body"]})),
+    ]
+}
+
+pub fn defs_for(r: &Rn) -> Vec<(&'static str, &'static str, Value)> {
+    defs().into_iter().chain(ghd()).filter(|(n, ..)| allowed(r, n)).collect()
+}
+
+const AINOTE: &str = "\n\n<sub>Written by an AI worker in ApolloOffice.</sub>";
+
+fn repo_ok(r: &str) -> bool {
+    regex::Regex::new(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$").unwrap().is_match(r) && !r.contains("..")
+}
+
+async fn ghcall(a: &Ax, n: &str, g: &Value) -> Result<String, String> {
+    let s = |k: &str| g[k].as_str().unwrap_or("").trim().to_string();
+    let repo = s("repo");
+    let num = g["number"].as_u64().map(|x| x.to_string()).unwrap_or_default();
+    let lim = g["limit"].as_u64().unwrap_or(20).clamp(1, 100).to_string();
+    if n != "gh_search_issues" && !repo_ok(&repo) {
+        return Err("repo must be owner/name".into());
+    }
+    if n != "gh_search_issues" && a.db.n("select count(*) from rp where lower(full)=lower(?)", crate::pa![repo.clone()]) == 0 {
+        return Err(format!("{repo} is not added to the office, so workers may not use it"));
+    }
+    if matches!(n, "gh_issue_view" | "gh_pr_view" | "gh_pr_diff" | "gh_comment" | "gh_label") && num.is_empty() {
+        return Err("number is required".into());
+    }
+    let st = s("state");
+    let st = if st.is_empty() { "open".to_string() } else { st };
+    let o = match n {
+        "gh_issue_view" => crate::sh::gh(&["issue", "view", &num, "-R", &repo, "--json", "number,title,body,state,author,labels,comments,url"], 60).await,
+        "gh_issue_list" => {
+            let lb = s("label");
+            let mut v = vec!["issue", "list", "-R", &repo, "--state", &st, "--limit", &lim, "--json", "number,title,state,labels,author,createdAt,url"];
+            if !lb.is_empty() {
+                v.extend(["--label", &lb]);
+            }
+            crate::sh::gh(&v, 60).await
+        }
+        "gh_pr_view" => crate::sh::gh(&["pr", "view", &num, "-R", &repo, "--json", "number,title,body,state,author,files,reviews,comments,mergeable,url"], 60).await,
+        "gh_pr_list" => crate::sh::gh(&["pr", "list", "-R", &repo, "--state", &st, "--limit", &lim, "--json", "number,title,state,author,createdAt,url"], 60).await,
+        "gh_pr_diff" => crate::sh::gh(&["pr", "diff", &num, "-R", &repo], 90).await,
+        "gh_search_issues" => {
+            let qy = s("query");
+            if qy.is_empty() {
+                return Err("query is required".into());
+            }
+            let rs: Vec<String> = a.db.all("select full from rp order by full", crate::pa![]).iter().filter_map(|x| x["full"].as_str().map(|f| format!("repo:{f}"))).collect();
+            if rs.is_empty() {
+                return Err("no repositories are added to the office".into());
+            }
+            let qq = format!("{} {}", qy.split_whitespace().filter(|t| !t.to_lowercase().starts_with("repo:") && !t.to_lowercase().starts_with("org:") && !t.to_lowercase().starts_with("user:")).collect::<Vec<_>>().join(" "), rs.join(" "));
+            crate::sh::gh(&["search", "issues", "--limit", &lim, "--json", "number,title,state,repository,url", "--", &qq], 60).await
+        }
+        "gh_comment" => {
+            let b = s("body");
+            if b.is_empty() {
+                return Err("body is required".into());
+            }
+            crate::sh::gh(&["issue", "comment", &num, "-R", &repo, "--body", &format!("{b}{AINOTE}")], 60).await
+        }
+        "gh_label" => {
+            let add: Vec<String> = g["add"].as_array().map(|x| x.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+            let rm: Vec<String> = g["remove"].as_array().map(|x| x.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+            if add.is_empty() && rm.is_empty() {
+                return Err("add or remove at least one label".into());
+            }
+            let (ja, jr) = (add.join(","), rm.join(","));
+            let mut v = vec!["issue", "edit", &num, "-R", &repo];
+            if !ja.is_empty() {
+                v.extend(["--add-label", &ja]);
+            }
+            if !jr.is_empty() {
+                v.extend(["--remove-label", &jr]);
+            }
+            crate::sh::gh(&v, 60).await
+        }
+        "gh_issue_create" => {
+            let (t, b) = (s("title"), s("body"));
+            if t.is_empty() || b.is_empty() {
+                return Err("title and body are required".into());
+            }
+            let lb: Vec<String> = g["labels"].as_array().map(|x| x.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+            let jl = lb.join(",");
+            let body = format!("{b}{AINOTE}");
+            let mut v = vec!["issue", "create", "-R", &repo, "--title", &t, "--body", &body];
+            if !jl.is_empty() {
+                v.extend(["--label", &jl]);
+            }
+            crate::sh::gh(&v, 60).await
+        }
+        _ => return Err("unknown tool".into()),
+    }?;
+    Ok(crate::sh::head(&o, 60_000))
+}
+
 const INSPECT_SCRIPT: &str = r##"const fs = require('fs');
 const path = require('path');
 const { createRequire } = require('module');
@@ -198,11 +321,34 @@ pub fn scrub_secrets(s: &str, secs: &[(String, String)]) -> String {
     let mut out = s.to_string();
     for (k, v) in sorted {
         out = out.replace(v.as_str(), &format!("[REDACTED:{k}]"));
+        // The same value as it appears inside a JSON string (quotes, \n...).
+        let j = serde_json::to_string(v).unwrap_or_default();
+        let j = j.trim_matches('"');
+        if j != v && j.len() >= 4 {
+            out = out.replace(j, &format!("[REDACTED:{k}]"));
+        }
     }
     out
 }
 
 pub async fn call(a: &Ax, r: &Rn, n: &str, g: &Value) -> Result<ToolOut, String> {
+    let o = call0(a, r, n, g).await;
+    if r.sec.is_empty() {
+        return o;
+    }
+    o.map(|t| ToolOut { text: scrub_secrets(&t.text, &r.sec), images: t.images }).map_err(|e| scrub_secrets(&e, &r.sec))
+}
+
+async fn call0(a: &Ax, r: &Rn, n: &str, g: &Value) -> Result<ToolOut, String> {
+    if !allowed(r, n) {
+        return Err(format!("the tool {n} is not allowed for this worker"));
+    }
+    if n.starts_with("gh_") {
+        if !r.w.is_empty() {
+            a.cmd(&r.w, &format!("github: {n} {}", g["repo"].as_str().unwrap_or("")));
+        }
+        return ghcall(a, n, g).await.map(ToolOut::from_text);
+    }
     let d = &r.dir;
     let s = |k: &str| g[k].as_str().unwrap_or("").to_string();
     if let Some(aq) = &r.ask_q {
@@ -270,7 +416,10 @@ pub async fn call(a: &Ax, r: &Rn, n: &str, g: &Value) -> Result<ToolOut, String>
             // The controller already prepared this project environment. Make it
             // the default for model commands too, including commands that cd
             // into a subdirectory. Never source repository activation scripts.
-            let secs = job_secrets(a, r.job);
+            // Both kinds of secret: the job's (asked through ask_user) and a
+            // pipeline worker's (Settings → Secrets, `Rn.sec`).
+            let mut secs = job_secrets(a, r.job);
+            secs.extend(r.sec.iter().cloned());
             let sec_pre = shell_env_prefix(&secs);
             let env = "if [ -x .venv/bin/python ]; then export VIRTUAL_ENV=\"$PWD/.venv\"; export PATH=\"$PWD/.venv/bin:$PATH\"; fi";
             let o = hx(a, &r.h, &format!("cd \"{d}\" && ( {sec_pre} {env}; to {} bash -c {}\n) 2>&1; echo \"[exit $?]\"", m * 60, q(&c)), m * 60 + 30).await;
@@ -378,7 +527,7 @@ pub async fn handle(a: &Ax, t: &str, m: &Value) -> Value {
     let Some(r) = a.runs.lock().unwrap().get(t).cloned() else { return json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32001, "message": "run is over"}}) };
     match m["method"].as_str().unwrap_or("") {
         "initialize" => json!({"jsonrpc": "2.0", "id": id, "result": {"protocolVersion": m["params"]["protocolVersion"].as_str().unwrap_or("2025-06-18"), "capabilities": {"tools": {}}, "serverInfo": {"name": "office", "version": crate::app::V}}}),
-        "tools/list" => json!({"jsonrpc": "2.0", "id": id, "result": {"tools": defs().into_iter().map(|(n, d, s)| json!({"name": n, "description": d, "inputSchema": s})).collect::<Vec<_>>()}}),
+        "tools/list" => json!({"jsonrpc": "2.0", "id": id, "result": {"tools": defs_for(&r).into_iter().map(|(n, d, s)| json!({"name": n, "description": d, "inputSchema": s})).collect::<Vec<_>>()}}),
         "tools/call" => {
             let n = m["params"]["name"].as_str().unwrap_or("");
             let g = if m["params"]["arguments"].is_object() { m["params"]["arguments"].clone() } else { json!({}) };
@@ -422,6 +571,23 @@ pub async fn bridge(port: u16, t: String) {
 
 #[cfg(test)]
 mod t {
+
+    #[test]
+    fn scoped_tools() {
+        let r = |t: Option<Vec<&str>>| super::Rn { h: "local".into(), dir: "/tmp".into(), w: String::new(), md: String::new(), tl: t.map(|v| v.into_iter().map(String::from).collect()), sec: vec![], ..Default::default() };
+        assert!(super::allowed(&r(None), "sh"));
+        assert!(super::allowed(&r(Some(vec!["shell"])), "sh"));
+        assert!(!super::allowed(&r(Some(vec!["shell"])), "write"));
+        assert!(super::allowed(&r(Some(vec!["files"])), "edit"));
+        assert!(!super::allowed(&r(Some(vec!["files"])), "sh"));
+        assert_eq!(super::defs_for(&r(Some(vec!["files"]))).len(), 5);
+        assert!(!super::allowed(&r(None), "gh_comment"));
+        assert!(super::allowed(&r(Some(vec!["github"])), "gh_pr_diff"));
+        assert!(!super::allowed(&r(Some(vec!["github"])), "sh"));
+        assert_eq!(super::defs_for(&r(Some(vec!["github"]))).len(), 9);
+        assert!(super::repo_ok("storytold/texturecraft") && !super::repo_ok("a/../b") && !super::repo_ok("x"));
+    }
+
     use super::*;
 
     #[cfg(unix)]
@@ -457,7 +623,7 @@ mod t {
         db.run("insert into hs(id,on_) values('local',1)", crate::pa![]);
         let a = std::sync::Arc::new(crate::app::App::new(db, root.clone(), 1, "x".into()));
         let aq = std::sync::Arc::new(std::sync::Mutex::new(None));
-        let r = Rn { h: "local".into(), dir: root.display().to_string(), w: "fixer".into(), md: String::new(), job: Some(7), ask_q: Some(aq.clone()) };
+        let r = Rn { h: "local".into(), dir: root.display().to_string(), w: "fixer".into(), md: String::new(), job: Some(7), ask_q: Some(aq.clone()), ..Default::default() };
         assert!(call(&a, &r, "ask_user", &json!({"question": "Need key", "secret": true, "env_name": "PATH"})).await.is_err());
         let ok = call(&a, &r, "ask_user", &json!({"question": "Provide Stripe test key", "why": "Need billing check", "secret": true, "env_name": "STRIPE_TEST_KEY", "choices": ["Skip billing test"]})).await.unwrap().text;
         assert!(ok.contains("Question queued"), "{ok}");

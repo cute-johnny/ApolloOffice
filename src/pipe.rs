@@ -11,6 +11,26 @@ use std::collections::BTreeSet;
 
 pub const RND: u64 = 2;
 const CIT: u64 = 150 * 60;
+const NODE_VERSION_SELECTION: &str = r#"if [ "${APOLLO_OFFICE_FNM:-}" != 1 ] || ! command -v fnm >/dev/null 2>&1; then exit 0; fi
+if [ -f .nvmrc ] || [ -f .node-version ] || { [ -f package.json ] && python3 -c 'import json,sys; e=json.load(open("package.json", encoding="utf-8")).get("engines", {}); sys.exit(0 if isinstance(e, dict) and isinstance(e.get("node"), str) and e["node"].strip() else 1)' >/dev/null 2>&1; }; then
+  fnm use --install-if-missing --resolve-engines
+fi"#;
+const NODE_VERSION_DIAGNOSTIC: &str = r#"source=
+required=
+if [ -f .nvmrc ]; then
+  source=.nvmrc
+  required=$(sed 's/#.*//' .nvmrc | sed -n '/[^[:space:]]/{s/^[[:space:]]*//;s/[[:space:]]*$//;p;q;}')
+elif [ -f .node-version ]; then
+  source=.node-version
+  required=$(sed 's/#.*//' .node-version | sed -n '/[^[:space:]]/{s/^[[:space:]]*//;s/[[:space:]]*$//;p;q;}')
+elif [ -f package.json ] && command -v python3 >/dev/null 2>&1; then
+  source=package.json
+  required=$(python3 -c 'import json; e=json.load(open("package.json", encoding="utf-8")).get("engines", {}); print(e.get("node", "") if isinstance(e, dict) else "")' 2>/dev/null) || required=
+fi
+if [ -n "$required" ]; then
+  have=$(node --version 2>/dev/null) || have=unavailable
+  printf 'Node hint: %s requests %s; the environment reports %s. Check version selection and setup tooling.\n' "$source" "$required" "$have"
+fi"#;
 
 pub fn gitb() -> String {
     std::env::var("APOLLO_OFFICE_REMOTE").unwrap_or_else(|_| "https://github.com/".into())
@@ -296,12 +316,34 @@ pub(crate) async fn prep(a: &Ax, j: &mut Job) -> R<()> {
         ok(a, j, &format!("git checkout -q -B {} refs/ao/head", q(&br)), 1800).await?;
         j.d["old"] = json!(ok(a, j, "git rev-parse HEAD", 60).await?);
     }
+    // Best-effort Node provisioning only in the managed build image. Do not
+    // reject a repository here: its setup may install or select Node itself.
+    let node_selection = x(a, j, &format!("bash -c {} 2>&1", q(NODE_VERSION_SELECTION)), 360).await;
+    if node_selection.c != 0 {
+        a.say(
+            "repro",
+            &format!(
+                "[{}] optional Node selection failed (setup will continue): {}",
+                j.h(),
+                crate::sh::last(node_selection.all().trim(), 240)
+            ),
+            Some(j.id),
+        );
+    }
     let su = setup_cmd(a, j);
     if !su.is_empty() && !(j.kind == "build" && j.milestone_idx == 1) {
         a.say("repro", &format!("[{}] setup: {}", j.h(), crate::sh::head(&su, 80)), Some(j.id));
         let r = x(a, j, &format!("to 1800 bash -c {} 2>&1 | tail -c 3000; exit ${{PIPESTATUS[0]}}", q(&su)), 1900).await;
         if r.c != 0 {
-            return drop(format!("setup command failed (exit {}): {}", r.c, crate::sh::last(r.o.trim(), 300)));
+            let mut reason = format!("setup command failed (exit {}): {}", r.c, crate::sh::last(r.o.trim(), 300));
+            // Diagnostic only: the original setup error remains authoritative.
+            // In particular, a repository may install Node through its own setup.
+            let hint = x(a, j, &format!("bash -c {} 2>&1", q(NODE_VERSION_DIAGNOSTIC)), 60).await;
+            if hint.c == 0 && !hint.o.trim().is_empty() {
+                reason.push('\n');
+                reason.push_str(&crate::sh::last(hint.o.trim(), 500));
+            }
+            return drop(reason);
         }
         ok(a, j, "git checkout -q -- . 2>/dev/null; true", 60).await?;
     }
@@ -668,7 +710,7 @@ async fn ci0(a: &Ax, j: &mut Job) -> R<String> {
                 if let Some(k) = t.1.filter(|_| !it) {
                     it = true;
                     a.say("ci", &format!("[{}] {c} needs {k}, installing it", j.h()), Some(j.id));
-                    let r = hx(a, &j.h(), &format!("{}cargo install {} --locked 2>&1 | tail -3", crate::sh::PRE, q(&k)), 2400).await;
+                    let r = hx(a, &j.h(), &format!("cargo install {} --locked 2>&1 | tail -3", q(&k)), 2400).await;
                     if r.c == 0 {
                         continue;
                     }
@@ -1087,7 +1129,12 @@ async fn fix(a: &Ax, j: &mut Job, fb0: String, k0: u64) -> R<Value> {
         }
         j.d["verification_feedback"] = json!("Executed verification and repository CI passed.");
         let mut f = js.clone();
-        fb = review(a, j, &mut f).await?;
+        fb = if crate::xs::rev(a) || crate::routing::enabled(a) { review(a, j, &mut f).await? } else { String::new() };
+        if fb.is_empty() && !crate::xs::steps(a).is_empty() {
+            let df = x(a, j, &format!("git diff {}..HEAD | head -c 60000", j.s("base")), 120).await.o;
+            let ci = rp(a, &j.repo)["ci"].as_str().unwrap_or("").to_string();
+            fb = crate::xs::run(a, j, &f, &df, &body(j, &f, &ci, "")).await?;
+        }
         if !fb.is_empty() {
             a.flow("reviewer", "fixer", "back");
             continue;
@@ -1130,6 +1177,12 @@ async fn reb(a: &Ax, j: &mut Job) -> R<()> {
     }
     if x(a, j, &format!("git merge-base --is-ancestor origin/{} HEAD", q(&mn)), 60).await.c != 0 {
         return drop("branch is not on top of the default branch after rebase");
+    }
+    if !j.s("fx").is_empty() {
+        let ex = ok(a, j, &format!("comm -13 <(git diff --name-only --no-renames $(git merge-base {o} origin/{m})..{o} | sort -u) <(git diff --name-only --no-renames origin/{m}..HEAD | sort -u)", o = q(&j.s("old")), m = q(&mn)), 60).await?;
+        if !ex.is_empty() {
+            return drop(format!("conflict resolution touched files outside the PR: {}", ex.lines().take(5).collect::<Vec<_>>().join(", ")));
+        }
     }
     let dt = ok(a, j, "git status --porcelain", 60).await?;
     if !dt.is_empty() {
@@ -2633,6 +2686,93 @@ pub async fn guard(a: Ax) {
 #[cfg(test)]
 mod t {
     use super::*;
+
+    #[cfg(unix)]
+    fn run_node_script(script: &str, nvmrc: Option<&str>, node_version: Option<&str>, package: Option<&str>, enable_fnm: bool) -> std::process::Output {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = std::env::temp_dir().join(format!(
+            "apollo-node-env-{}-{}",
+            std::process::id(),
+            hex::encode(rand::random::<[u8; 8]>())
+        ));
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for (file, body) in [(".nvmrc", nvmrc), (".node-version", node_version), ("package.json", package)] {
+            if let Some(body) = body {
+                std::fs::write(root.join(file), body).unwrap();
+            }
+        }
+        let fnm = bin.join("fnm");
+        std::fs::write(&fnm, "#!/bin/sh\nprintf 'fnm-called: %s\\n' \"$*\"\n").unwrap();
+        let mut permissions = std::fs::metadata(&fnm).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&fnm, permissions).unwrap();
+        let output = std::process::Command::new("/bin/bash")
+            .arg("-c")
+            .arg(script)
+            .current_dir(&root)
+            .env("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default()))
+            .env("APOLLO_OFFICE_FNM", if enable_fnm { "1" } else { "0" })
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(root);
+        output
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn node_selection_is_optional_and_supports_version_sources() {
+        let none = run_node_script(NODE_VERSION_SELECTION, None, None, None, true);
+        assert!(none.status.success());
+        assert!(none.stdout.is_empty());
+
+        let pinned = run_node_script(NODE_VERSION_SELECTION, Some("v24.1.0\n"), None, None, true);
+        assert!(pinned.status.success());
+        assert!(String::from_utf8_lossy(&pinned.stdout).contains("fnm-called: use --install-if-missing --resolve-engines"));
+
+        let alias = run_node_script(NODE_VERSION_SELECTION, Some("lts/iron\n"), None, None, true);
+        assert!(alias.status.success());
+        assert!(String::from_utf8_lossy(&alias.stdout).contains("fnm-called: use"));
+
+        let node_version = run_node_script(NODE_VERSION_SELECTION, None, Some("22\n"), None, true);
+        assert!(node_version.status.success());
+        assert!(String::from_utf8_lossy(&node_version.stdout).contains("fnm-called: use"));
+
+        let engine = run_node_script(NODE_VERSION_SELECTION, None, None, Some(r#"{"engines":{"node":">=22 <25"}}"#), true);
+        assert!(engine.status.success());
+        assert!(String::from_utf8_lossy(&engine.stdout).contains("fnm-called: use"));
+
+        let no_engine = run_node_script(NODE_VERSION_SELECTION, None, None, Some(r#"{"name":"no-node-requirement"}"#), true);
+        assert!(no_engine.status.success());
+        assert!(no_engine.stdout.is_empty());
+
+        let host = run_node_script(NODE_VERSION_SELECTION, Some("24\n"), None, None, false);
+        assert!(host.status.success());
+        assert!(host.stdout.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn node_diagnostic_only_reports_existing_requirements() {
+        let none = run_node_script(NODE_VERSION_DIAGNOSTIC, None, None, None, false);
+        assert!(none.status.success());
+        assert!(none.stdout.is_empty());
+
+        let pinned = run_node_script(NODE_VERSION_DIAGNOSTIC, Some("24 # pinned major\n"), None, None, false);
+        let message = String::from_utf8_lossy(&pinned.stdout);
+        assert!(pinned.status.success());
+        assert!(message.contains(".nvmrc requests 24;"), "{message}");
+
+        let node_version = run_node_script(NODE_VERSION_DIAGNOSTIC, None, Some("22\n"), None, false);
+        assert!(String::from_utf8_lossy(&node_version.stdout).contains(".node-version requests 22;"));
+
+        let engine = run_node_script(NODE_VERSION_DIAGNOSTIC, None, None, Some(r#"{"engines":{"node":">=20 <25"}}"#), false);
+        assert!(String::from_utf8_lossy(&engine.stdout).contains("package.json requests >=20 <25;"));
+
+        let ignored = run_node_script(NODE_VERSION_DIAGNOSTIC, None, None, Some(r#"{"name":"no-engines"}"#), false);
+        assert!(ignored.stdout.is_empty());
+    }
 
     #[cfg(unix)]
     #[tokio::test]

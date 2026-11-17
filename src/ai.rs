@@ -50,6 +50,7 @@ pub struct Ask {
     pub sys: String,
     pub p: String,
     pub job: Option<i64>,
+    pub run: Option<i64>,
     pub turns: u32,
     pub ef: Option<&'static str>,
     pub t: u64,
@@ -58,7 +59,7 @@ pub struct Ask {
 
 impl Ask {
     pub fn new(w: &'static str, md: String, sys: String, p: String) -> Ask {
-        Ask { w, md, sys, p, job: None, turns: 1, ef: None, t: 1800, rn: None }
+        Ask { w, md, sys, p, job: None, run: None, turns: 1, ef: None, t: 1800, rn: None }
     }
 }
 
@@ -141,7 +142,7 @@ pub fn cost(a: &Ax, o: &Ask, u: [i64; 4], usd: Option<f64>) {
     let c = usd.or_else(|| crate::prov::px(a, &o.md).map(|x| (0..4).map(|i| u[i] as f64 * x[i]).sum::<f64>() / 1e6));
     let j = o.job.and_then(|j| a.db.jg(j));
     let rp = j.as_ref().map(|x| x.repo.clone()).unwrap_or_default();
-    a.db.run("insert into cost(t,day,job,repo,w,md,sub,tin,tcw,tcr,tout,usd) values(?,?,?,?,?,?,?,?,?,?,?,?)", crate::pa![crate::db::now(), crate::db::day(), o.job, rp.clone(), o.w.to_string(), o.md.clone(), sub as i64, u[0], u[1], u[2], u[3], c]);
+    a.db.run("insert into cost(t,day,job,run,repo,w,md,sub,tin,tcw,tcr,tout,usd) values(?,?,?,?,?,?,?,?,?,?,?,?,?)", crate::pa![crate::db::now(), crate::db::day(), o.job, o.run, rp.clone(), o.w.to_string(), o.md.clone(), sub as i64, u[0], u[1], u[2], u[3], c]);
     if let (Some(uval), Some(pid)) = (c, j.as_ref().and_then(|x| x.project_id)) {
         a.db.p_add_spend(pid, uval);
     }
@@ -513,7 +514,7 @@ async fn api(a: &Ax, o: Ask) -> R<(String, Value)> {
         return Err(X::E(format!("no model set for {}", o.w)));
     }
     let result_limit=if crate::routing::is_free(&o.md) {6000} else {100_000};
-    let defs = if o.rn.is_some() { crate::mcp::defs() } else { vec![] };
+    let defs = o.rn.as_ref().map(crate::mcp::defs_for).unwrap_or_default();
     let mx = if defs.is_empty() { 1 } else { o.turns.max(1) };
     let dl = std::time::Instant::now() + Duration::from_secs(o.t);
     let left = || dl.saturating_duration_since(std::time::Instant::now()).max(Duration::from_secs(5));

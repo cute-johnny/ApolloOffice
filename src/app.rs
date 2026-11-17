@@ -19,6 +19,7 @@ pub struct Wk {
     pub t: i64,
     pub mood: String,
     pub cmds: Vec<(i64, String)>,
+    pub nm: String,
 }
 
 #[derive(Clone, Serialize, Default)]
@@ -59,6 +60,8 @@ pub struct Rn {
     pub md: String,
     pub job: Option<i64>,
     pub ask_q: Option<std::sync::Arc<std::sync::Mutex<Option<serde_json::Value>>>>,
+    pub tl: Option<Vec<String>>,
+    pub sec: Vec<(String, String)>,
 }
 
 pub struct App {
@@ -126,7 +129,7 @@ pub fn netish(s: &str) -> bool {
 }
 
 pub fn hostish(s: &str) -> bool {
-    regex::Regex::new(r"(?i)container \S+ is (paused|not running|restarting)|no such container|cannot connect to the docker daemon|is the docker daemon running|machine \S+ is gone|connection closed by|kex_exchange|ssh: connect|permission denied \(publickey|host key verification failed|ssh_exchange_identification|connection timed out during banner").unwrap().is_match(s)
+    regex::Regex::new(r"(?i)container \S+ is (paused|not running|restarting)|no such container|cannot connect to the docker daemon|is the docker daemon running|machine \S+ is gone|connection closed by|kex_exchange|ssh: connect|permission denied \(publickey|host key verification failed|ssh_exchange_identification|connection timed out during banner|fork: (retry: )?resource temporarily unavailable|cannot fork|oci runtime exec failed").unwrap().is_match(s)
 }
 
 pub fn ddir(o: Option<PathBuf>) -> PathBuf {

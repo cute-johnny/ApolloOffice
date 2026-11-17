@@ -26,13 +26,14 @@
     ci: { body: "#8d9199", dark: "#62666d", light: "#b9bcc2" },
     design_fixer: { body: "#e88cb5", dark: "#b55683", light: "#f5b8d4" },
     tester: { body: "#74c788", dark: "#469359", light: "#a8e3b7" },
+    architect: { body: "#b8952f", dark: "#866b1e", light: "#e7c65a" },
+    desk: { body: "#26282d", dark: "#101113", light: "#6b6f78" },
     reviewer: { body: "#d0649f", dark: "#a3437a", light: "#e597c2" },
     submit: { body: "#5cbf6a", dark: "#3d9149", light: "#94dd9e" },
     watcher: { body: "#4fb3e0", dark: "#2f86b0", light: "#8fd2f0" },
-    architect: { body: "#b8952f", dark: "#866b1e", light: "#e7c65a" },
-    desk: { body: "#34363d", dark: "#15161a", light: "#7a7f8a" },
+    pipe: { body: "#9c7ae0", dark: "#7a58c0", light: "#c4b0f0" },
   };
-  const NM = { architect: "Architect", hunter: "Hunter", scout: "Scout", guard: "Guard", vet: "Vet", repro: "Repro", fixer: "Fixer", ci: "CI", design_fixer: "Design Fixer", tester: "Tester", reviewer: "Reviewer", submit: "Submit", watcher: "Watcher", desk: "Front desk" };
+  const NM = { pipe: "Pipelines", architect: "Architect", hunter: "Hunter", scout: "Scout", guard: "Guard", vet: "Vet", repro: "Repro", fixer: "Fixer", ci: "CI", design_fixer: "Design Fixer", tester: "Tester", reviewer: "Reviewer", submit: "Submit", watcher: "Watcher", desk: "Front desk" };
   window.AO.NM = NM;
   const DESC = {
     architect: "Designs software architecture and breaks large application prompts into a dependency-ordered milestone DAG on an epic branch.",
@@ -55,17 +56,13 @@
   window.AO.DESC = DESC;
   const ORD = ["scout", "guard", "vet", "architect", "watcher", "hunter", "repro", "fixer", "ci", "design_fixer", "tester", "reviewer", "submit"];
 
-  // The floor is 464 wide; the 84 pixels on the right are the front desk wing.
-  const VW = 548, VH = 258;
-  const AN = { scout: [34, 74], guard: [74, 74], vet: [150, 74], watcher: [226, 74], architect: [272, 74], repro: [64, 164], fixer: [106, 164], design_fixer: [148, 164], tester: [190, 164], ci: [391, 100], reviewer: [232, 164], submit: [274, 164], desk: [506, 172] };
-  const TEAM = [["hunter", "hunt", 0], ["repro", "repro", 8], ["fixer", "fix", 102], ["design_fixer", "design", 166], ["tester", "test", 230], ["reviewer", "review", 294], ["submit", "submit", 358]];
-  const FITC = ["#e8e6df", "#1b1a18", "#4fb3e0", "#e0675a", "#5cbf6a", "#9c7ae0", "#d0649f", "#8d9199"];
+  let VW = 400, VH = 259;
 
   const cv = $("cv");
   const cx = cv.getContext("2d");
   const off = document.createElement("canvas");
   off.width = VW; off.height = VH;
-  const c = off.getContext("2d");
+  let c = off.getContext("2d");
   const fig = document.createElement("canvas");
   fig.width = K.W; fig.height = K.H;
   const fc = fig.getContext("2d");
@@ -73,110 +70,267 @@
   let S = null, err = 0;
   const t0 = performance.now();
 
-  const gray = (h, k) => {
-    const n = parseInt(h.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255;
-    const y = Math.round((r * 0.3 + g * 0.59 + b * 0.11) * k);
-    return "#" + [y, y, y].map((v) => v.toString(16).padStart(2, "0")).join("");
-  };
-  const dim = (sk) => ({ body: gray(sk.body, 0.6), dark: gray(sk.dark, 0.6), light: gray(sk.light, 0.6) });
   const LT = { "#3d4045": "#8a94a2", "#4a4d54": "#5a6472", "#75746f": "#8a94a2", "#1d1f24": "#c9d1db" };
   const lt = () => document.documentElement.dataset.th === "light";
   const C = (k) => (lt() && LT[k]) || k;
-  const hl = (n) => (lt() ? SK[n].dark : SK[n].light);
+  const hl = (n) => (lt() ? SK[n].tx || txc(SK[n].dark, 0.8) : SK[n].light);
+  const txc = (c, f = 0.55) => !/^#[0-9a-f]{6}$/i.test(c) ? c : "#" + [1, 3, 5].map((i) => Math.round(parseInt(c.slice(i, i + 2), 16) * f).toString(16).padStart(2, "0")).join("");
   window.AO.hl = hl;
   const px = (x, y, w, h, col) => { c.fillStyle = C(col); c.fillRect(Math.round(x), Math.round(y), w, h); };
   const tx = (s, x, y, col) => K.text(c, s, x, y, C(col));
   const party = () => S?.lm && S.t - S.lm.t < 180000;
 
-  const win = (x, y, w, h, t, sd) => {
-    px(x - 1, y - 1, w + 2, h + 2, "#c3ccd7");
-    px(x, y, w, h, "#dcedf8");
-    px(x, y, w, h * 0.6, "#c6e3f6");
-    px(x, y, w, h * 0.3, "#b0d7f1");
-    c.save(); c.beginPath(); c.rect(x, y, w, h); c.clip();
-    for (let k = 0; k < 2; k++) {
-      const cx = x - 14 + ((t * (1.5 + k) + sd * 37 + k * 41) % (w + 28)), cy = y + 4 + k * 8;
-      px(cx, cy, 10, 2, "#ffffff"); px(cx + 2, cy - 2, 5, 2, "#ffffff");
+  const SD = { floor: { d: ["#0d0e10", "#111215"], l: ["#e9eef3", "#e2e8ee"] }, wall: { d: ["#121317", "#1d1f24"], l: ["#f8f9fb", "#dde3ea"] } };
+  const SV = { floor: { d: ["#24272d", "#3a3e46"], l: ["#d5dce4", "#aeb8c4"] }, wall: { d: ["#24272d", "#3a3e46"], l: ["#d5dce4", "#aeb8c4"] } };
+  const PS = { floor: ["check", "plain", "planks", "tiles", "parquet", "carpet"], wall: ["plain", "stripes", "panels", "brick", "dots", "boards"] };
+  const HX = /^#[0-9a-f]{6}$/i;
+  let SU = { floor: { p: "check", a: "", b: "" }, wall: { p: "plain", a: "", b: "" } };
+  const scol = (k, pv) => { const f = SU[k], d = (pv ? SV : SD)[k][lt() ? "l" : "d"]; return pv && !f.a && !f.b ? d : [f.a || SD[k][lt() ? "l" : "d"][0], f.b || SD[k][lt() ? "l" : "d"][1]]; };
+  const pat = (g, p, ca, cb, x0, y0, w, h) => {
+    const r = (x, y, ww, hh, col) => { g.fillStyle = col; g.fillRect(x, y, ww, hh); };
+    g.save(); g.beginPath(); g.rect(x0, y0, w, h); g.clip();
+    r(x0, y0, w, h, ca);
+    if (p === "check") for (let k = 0, y = y0; y < y0 + h; y += 8, k++) for (let x = x0 + (k % 2 ? 0 : 8); x < x0 + w; x += 16) r(x, y, 8, 8, cb);
+    else if (p === "planks") for (let k = 0, y = y0; y < y0 + h; y += 8, k++) { r(x0, y + 7, w, 1, cb); for (let x = x0 - (k * 23) % 64; x < x0 + w; x += 64) r(x, y, 1, 7, cb); }
+    else if (p === "tiles") for (let y = y0; y < y0 + h; y += 16) { r(x0, y, w, 1, cb); for (let x = x0; x < x0 + w; x += 16) r(x, y, 1, 16, cb); }
+    else if (p === "parquet") for (let j = 0, y = y0; y < y0 + h; y += 16, j++) for (let i = 0, x = x0; x < x0 + w; x += 16, i++) for (let s = 0; s < 4; s++) (i + j) % 2 ? r(x, y + s * 4, 16, 1, cb) : r(x + s * 4, y, 1, 16, cb);
+    else if (p === "carpet") for (let k = 0, y = y0 + 1; y < y0 + h; y += 4, k++) for (let x = x0 + (k % 2 ? 1 : 3); x < x0 + w; x += 4) r(x, y, 1, 1, cb);
+    else if (p === "stripes") for (let x = x0; x < x0 + w; x += 8) r(x, y0, 3, h, cb);
+    else if (p === "panels") for (let x = x0 + 2; x < x0 + w; x += 24) { r(x, y0 + 4, 20, 1, cb); r(x, y0 + h - 5, 20, 1, cb); r(x, y0 + 4, 1, h - 8, cb); r(x + 19, y0 + 4, 1, h - 8, cb); }
+    else if (p === "brick") for (let k = 0, y = y0; y < y0 + h; y += 6, k++) { r(x0, y + 5, w, 1, cb); for (let x = x0 - (k % 2 ? 6 : 0); x < x0 + w; x += 12) r(x, y, 1, 5, cb); }
+    else if (p === "dots") for (let k = 0, y = y0 + 2; y < y0 + h; y += 6, k++) for (let x = x0 + (k % 2 ? 2 : 5); x < x0 + w; x += 6) r(x, y, 1, 1, cb);
+    else if (p === "boards") for (let k = 0, y = y0; y < y0 + h; y += 5, k++) { r(x0, y + 4, w, 1, cb); for (let x = x0 - (k * 17) % 48; x < x0 + w; x += 48) r(x, y, 1, 4, cb); }
+    g.restore();
+  };
+  const floor = () => {
+    const [fa, fb] = scol("floor"), [wa, wb] = scol("wall");
+    pat(c, SU.floor.p, fa, fb, 0, 35, VW, VH - 35);
+    pat(c, SU.wall.p, wa, wb, 0, 0, VW, 30);
+    c.fillStyle = wb; c.fillRect(0, 30, VW, 5);
+    c.globalAlpha = 0.35; c.fillStyle = "#000"; c.fillRect(0, 34, VW, 1); c.globalAlpha = 1;
+  };
+  const one = (k, f) => ({ p: PS[k].includes(f?.p) ? f.p : PS[k][0], a: HX.test(f?.a || "") ? f.a : "", b: HX.test(f?.b || "") ? f.b : "" });
+  let GX = 50, GY = 28;
+  const GO = 35;
+  const room = (w, h) => { GX = w; GY = h; VW = w * 8; VH = GO + h * 8; off.width = VW; off.height = VH; c.imageSmoothingEnabled = false; };
+  const FC = {
+    desk: { n: "Desk", w: 4, h: 2, d: (X, Y) => { px(X + 10, Y - 5, 12, 8, "#2a2c32"); px(X + 11, Y - 4, 10, 6, "#141518"); px(X + 12, Y - 3, 5, 1, "#4fb3e0"); px(X + 15, Y + 3, 2, 2, "#2a2c32"); px(X, Y + 5, 32, 3, "#2a2c32"); px(X, Y + 8, 32, 5, "#1c1e22"); px(X + 2, Y + 13, 2, 3, "#2a2c32"); px(X + 28, Y + 13, 2, 3, "#2a2c32"); } },
+    chair: { n: "Chair", w: 2, h: 2, d: (X, Y) => { px(X + 3, Y, 10, 7, "#30333a"); px(X + 2, Y + 7, 12, 4, "#3a3e46"); px(X + 7, Y + 11, 2, 3, "#2a2c32"); px(X + 3, Y + 14, 10, 1, "#2a2c32"); } },
+    plant: { n: "Plant", w: 1, h: 1, d: (X, Y) => { px(X + 1, Y + 3, 6, 5, "#2a2c32"); K.draw(c, ["..e.e..", ".eEe.e.", "e.eEee.", ".eeEe.e", "..eEe.."], X, Y - 3, {}); } },
+    rack: { n: "Server", w: 2, h: 2, d: (X, Y, t) => { px(X + 1, Y - 16, 14, 31, "#1c1e22"); px(X + 1, Y - 16, 14, 1, "#2a2c32"); for (let i = 0; i < 5; i++) { px(X + 3, Y - 13 + i * 5, 10, 4, "#141518"); px(X + 9, Y - 12 + i * 5, 1, 1, Math.floor(t * 2 + i + X) % 3 ? "#3d4045" : "#5cbf6a"); px(X + 11, Y - 12 + i * 5, 1, 1, "#3d4045"); } } },
+    sofa: { n: "Sofa", w: 5, h: 2, d: (X, Y) => { px(X + 1, Y - 2, 38, 8, "#3f5fae"); px(X + 1, Y + 6, 38, 6, "#5c7fd6"); px(X, Y + 2, 4, 11, "#3f5fae"); px(X + 36, Y + 2, 4, 11, "#3f5fae"); px(X + 19, Y + 6, 1, 6, "#3f5fae"); px(X + 2, Y + 13, 2, 2, "#1c1e22"); px(X + 36, Y + 13, 2, 2, "#1c1e22"); } },
+    table: { n: "Table", w: 3, h: 2, d: (X, Y) => { px(X + 1, Y + 2, 22, 7, "#4a3a2c"); px(X + 1, Y + 2, 22, 1, "#6b5440"); px(X + 1, Y + 9, 22, 2, "#3a2d22"); px(X + 3, Y + 11, 2, 4, "#3a2d22"); px(X + 19, Y + 11, 2, 4, "#3a2d22"); } },
+    shelf: { n: "Shelf", w: 4, h: 1, d: (X, Y) => { px(X, Y - 16, 32, 24, "#2a2c32"); for (let i = 0; i < 3; i++) { px(X + 2, Y - 14 + i * 7, 28, 5, "#141518"); for (let k = 0; k < 7; k++) px(X + 3 + k * 4, Y - 13 + i * 7 + ((k + i) % 3 ? 0 : 1), 3, 4 - ((k + i) % 3 ? 0 : 1), ["#e0675a", "#5c7fd6", "#5cbf6a", "#9c7ae0", "#d0649f", "#4fb3e0"][(k * 3 + i) % 6]); } } },
+    coffee: { n: "Coffee", w: 2, h: 1, d: (X, Y, t) => { px(X, Y - 2, 16, 10, "#2a2c32"); px(X + 3, Y - 12, 10, 10, "#62666d"); px(X + 4, Y - 11, 8, 3, "#1c1e22"); px(X + 6, Y - 6, 4, 4, "#e9eef3"); if (Math.floor(t * 1.5) % 3 === 0) px(X + 7, Y - 15, 1, 2, "#8d9199"); } },
+    cooler: { n: "Water", w: 1, h: 1, d: (X, Y) => { px(X + 1, Y - 2, 6, 10, "#b9bcc2"); px(X + 2, Y - 10, 4, 8, "#4fb3e0"); px(X + 2, Y - 10, 4, 1, "#8fd2f0"); } },
+    lamp: { n: "Lamp", w: 1, h: 1, d: (X, Y) => { px(X + 3, Y - 10, 2, 17, "#3d4045"); px(X + 1, Y - 14, 6, 4, "#e4e9ef"); px(X + 1, Y + 6, 6, 2, "#2a2c32"); } },
+    rug: { n: "Rug", w: 6, h: 4, l: 0, d: (X, Y) => { px(X, Y, 48, 32, "#5a2f3a"); px(X + 2, Y + 2, 44, 28, "#7a3f4f"); px(X + 6, Y + 6, 36, 20, "#5a2f3a"); px(X + 8, Y + 8, 32, 16, "#8a4a5c"); } },
+  };
+  let FU = [], ftool = null, fsel = -1, fedit = false, fhov = null, fdrag = null, fsave = 0, fhis = [], ffut = [], fbad = false;
+  const fl = (i) => FC[i].l ?? 1;
+  const free = (it, x, y, skip) => {
+    const f = FC[it];
+    if (x < 0 || y < 0 || x + f.w > GX || y + f.h > GY) return false;
+    return !FU.some((u, k) => k !== skip && fl(u.i) === fl(it) && x < u.x + FC[u.i].w && u.x < x + f.w && y < u.y + FC[u.i].h && u.y < y + f.h);
+  };
+  const fput = () => { fsave = 0; return fetch("/api/set", { method: "POST", keepalive: true, headers: { "content-type": "application/json", "x-ao": "1" }, body: JSON.stringify({ office: { items: FU } }) }).catch(() => {}); };
+  const fstore = () => { clearTimeout(fsave); fsave = setTimeout(fput, 400); };
+  const fflush = () => { if (fsave) { clearTimeout(fsave); fput(); } };
+  window.addEventListener("pagehide", fflush);
+  let rsave = 0;
+  const ext = () => FU.reduce((m, u) => [Math.max(m[0], u.x + FC[u.i].w), Math.max(m[1], u.y + FC[u.i].h)], [0, 0]);
+  let fcb = () => {};
+  const fch = () => { fcb(); };
+  const snap = () => { fhis.push(JSON.stringify(FU)); if (fhis.length > 100) fhis.shift(); ffut = []; };
+  const commit = () => { fstore(); fch(); };
+  const near = (it, x0, y0) => {
+    for (let d = 0; d < Math.max(GX, GY); d++) for (let dy = -d; dy <= d; dy++) for (let dx = -d; dx <= d; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== d) continue;
+      if (free(it, x0 + dx, y0 + dy, -1)) return [x0 + dx, y0 + dy];
     }
-    c.restore();
-    if (w > 40) px(x + (w >> 1), y, 1, h, "#c3ccd7");
-    px(x - 3, y + h + 1, w + 6, 2, "#e4e9ef");
+    return null;
   };
-  const day = (t) => {
-    px(0, 0, VW, VH, "#e9eef3");
-    for (let k = 0, y = 35; y < VH; y += 8, k++) for (let x = k % 2 ? 0 : 8; x < VW; x += 16) px(x, y, 8, 8, "#e2e8ee");
-    c.globalAlpha = 0.55;
-    for (const [x0, w] of [[36, 110], [390, 66]]) for (let y = 35; y < 92; y++) px(x0 + (y - 35) * 0.7, y, w, 1, "#f7fafc");
-    c.globalAlpha = 1;
-    px(0, 0, VW, 34, "#f8f9fb");
-    px(0, 30, VW, 4, "#e6ebf0");
-    px(0, 34, VW, 1, "#c9d1db");
-    win(36, 5, 110, 22, t, 1);
-    win(390, 5, 66, 22, t, 2);
-    px(320, 38, 140, 84, "#f3f5f8");
-    px(320, 38, 140, 1, "#c9d1db");
-    px(320, 38, 1, 84, "#c9d1db");
-    tx("MACHINES", 326, 42, "#8a94a2");
-    px(190, 6, 84, 22, "#0a0b0d");
-    px(190, 6, 84, 1, "#24272d");
+  const ghost = () => {
+    if (!fhov) return null;
+    if (fdrag?.n) return { i: fdrag.n, x: fhov.x - fdrag.dx, y: fhov.y - fdrag.dy, sk: -1 };
+    if (fdrag) return { i: FU[fdrag.k].i, x: fhov.x - fdrag.dx, y: fhov.y - fdrag.dy, sk: fdrag.k };
+    if (ftool) { const f = FC[ftool]; return { i: ftool, x: fhov.x - (f.w >> 1), y: fhov.y - (f.h >> 1), sk: -1 }; }
+    return null;
   };
-  const floor = (t) => {
-    if (lt()) return day(t);
-    px(0, 0, VW, VH, "#0d0e10");
-    px(0, 0, VW, 34, "#121317");
-    px(0, 34, VW, 1, "#1d1f24");
-    for (let k = 0, y = 35; y < VH; y += 8, k++) for (let x = k % 2 ? 0 : 8; x < VW; x += 16) px(x, y, 8, 8, "#111215");
-    px(320, 38, 140, 84, "#0f1013");
-    px(320, 38, 140, 1, "#1d1f24");
-    px(320, 38, 1, 84, "#1d1f24");
-    tx("MACHINES", 326, 42, "#3d4045");
-    px(190, 6, 84, 22, "#0a0b0d");
-    px(190, 6, 84, 1, "#24272d");
-  };
-
-  const board = (t) => {
-    const s = S;
-    tx("APOLLO OFFICE", 194, 9, "#8a8d94");
-    if (!s) return;
-    const q = (s.n.ready || 0) + (s.n.repro || 0) + (s.n.fix || 0) + (s.n.ci || 0) + (s.n.design || 0) + (s.n.test || 0) + (s.n.review || 0) + (s.n.gate || 0) + (s.n.submit || 0);
-    const op = s.pr.filter((p) => p.st === "open").length;
-    if (s.o.off) { if (Math.floor(t * 2) % 2) tx("OFFLINE", 196, 18, "#e0675a"); }
-    else if (party()) { if (Math.floor(t * 3) % 2) tx("MERGED!", 196, 18, "#5cbf6a"); }
-    else tx(`Q ${q} PR ${op}`, 196, 18, "#5c5f66");
-    const live = !s.o.off && !s.o.pause && !s.o.man;
-    const ap = (s.n.approve || 0);
-    if (ap) { px(364, 136, 70, 16, "#131a14"); px(364, 136, 70, 1, "#3d9149"); tx(`APPROVE ${ap}`, 368, 141, Math.floor(t * 1.5) % 2 ? "#94dd9e" : "#5cbf6a"); }
-    px(266, 10, 3, 3, live ? (Math.floor(t * 1.5) % 2 ? "#5cbf6a" : "#3d9149") : s.o.off ? "#e0675a" : "#8d9199");
-    const d = new Date();
-    tx(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`, 6, 9, "#4a4d54");
-  };
-
-  const PLANE = [["w....", "www..", "wwwww", ".gww.", "..g.."], ["..g..", ".gww.", "wwwww", "www..", "w...."]];
-  const paths = (t) => {
-    if (!S) return;
-    const now = S.t + (performance.now() - last);
-    for (const f of S.fl) {
-      if (!AN[f.a] || !AN[f.b]) continue;
-      const D = 1800, k = Math.min(1, (now - f.t) / D);
-      if (k >= 1) continue;
-      const [x0, y0] = AN[f.a], [x1, y1] = AN[f.b];
-      const ax = x0, ay = y0 - 22, bx = x1, by = y1 - 22;
-      const hgt = 18 + Math.min(40, Math.hypot(bx - ax, by - ay) * 0.25);
-      const pos = (u) => [ax + (bx - ax) * u, ay + (by - ay) * u - Math.sin(u * Math.PI) * hgt];
-      const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
-      for (let j = 1; j <= 14; j++) {
-        const u = e - j * 0.018;
-        if (u <= 0) break;
-        if (j % 2) continue;
-        const [tx, ty] = pos(u);
-        c.globalAlpha = (1 - j / 15) * 0.8;
-        px(tx, ty, 1, 1, hl(f.a));
+  const box = (u, cl, a) => { const f = FC[u.i], X = u.x * 8, Y = GO + u.y * 8; c.globalAlpha = a; px(X, Y, f.w * 8, 1, cl); px(X, Y + f.h * 8 - 1, f.w * 8, 1, cl); px(X, Y, 1, f.h * 8, cl); px(X + f.w * 8 - 1, Y, 1, f.h * 8, cl); c.globalAlpha = 1; };
+  const pick = (p) => { if (!p) return -1; for (let k = FU.length - 1; k >= 0; k--) { const u = FU[k], f = FC[u.i]; if (fl(u.i) && p.x >= u.x && p.x < u.x + f.w && p.y >= u.y && p.y < u.y + f.h) return k; } return FU.findIndex((u) => p.x >= u.x && p.x < u.x + FC[u.i].w && p.y >= u.y && p.y < u.y + FC[u.i].h); };
+  const places = () => {
+    const ds = FU.map((u, k) => [u, k]).filter(([u]) => u.i === "desk").sort((a, b) => a[0].y - b[0].y || a[0].x - b[0].x);
+    const ch = FU.map((u, k) => [u, k]).filter(([u]) => u.i === "chair"), used = new Set(), ps = [];
+    for (const [d] of ds) {
+      let best = null, bd = 99;
+      for (const [c, k] of ch) {
+        if (used.has(k) || c.x + 2 <= d.x || c.x >= d.x + 4) continue;
+        const dy = c.y >= d.y + 1 && c.y <= d.y + 3 ? c.y - d.y - 1 : c.y <= d.y - 1 && c.y >= d.y - 3 ? d.y - 1 - c.y : 99;
+        const dd = dy * 4 + Math.abs(c.x + 1 - (d.x + 2));
+        if (dy < 99 && dd < bd) { bd = dd; best = [c, k]; }
       }
-      c.globalAlpha = 1;
-      const [x, y] = pos(e), [nx] = pos(Math.min(1, e + 0.02));
-      K.draw(c, PLANE[0], x - 2, y - 2, {}, nx < x);
+      if (best) { used.add(best[1]); ps.push({ k: best[1], back: best[0].y > d.y }); }
     }
+    return ps;
   };
+  window.AO.places = places;
+  const seats = () => {
+    const st = (S?.staff || []).filter((id) => (S?.crew || []).some((w) => w.id === id)), ps = places();
+    const m = new Map();
+    st.forEach((id, i) => { if (ps[i]) m.set(ps[i].k, { id, back: ps[i].back }); });
+    return { m, wait: st.slice(ps.length), ids: new Set(st.slice(0, ps.length)) };
+  };
+  const pst = (id) => {
+    const rs = (S?.rn || []).filter((r) => r.w === id);
+    if (rs.some((r) => r.st === "run" && !r.blk)) return "work";
+    if (S?.o?.man) return "sleep";
+    return "idle";
+  };
+  const person = (id, x, y, t, sit, back) => {
+    const k = "c:" + id, s0 = SK[k] || { body: "#8d9199", dark: "#62666d", light: "#b9bcc2" }, sk = back ? { ...s0, eye: s0.body } : s0;
+    const st = sit ? pst(id) : "wait", sd = id.length * 1.7 + id.charCodeAt(0) * 0.13;
+    const p = K.pose();
+    p.legs = sit ? "sit" : "stand";
+    const bl = Math.floor((t + sd) * 10) % 47 === 0;
+    if (st === "work") {
+      const q = Math.floor(t * 9 + sd);
+      p.armL = "front"; p.armR = "front"; p.aL = [0, q % 2 ? -1 : 0]; p.aR = [0, q % 2 ? 0 : -1];
+      p.ex = -1; p.ey = 1; p.dy = Math.floor(t * 4 + sd) % 4 === 0 ? -1 : 0;
+      if (bl) p.eyes = "shut";
+    } else if (st === "sleep") {
+      p.eyes = "shut"; p.bh = -1; p.dy = 1; p.armL = "low"; p.armR = "low";
+    } else if (st === "wait") {
+      p.ex = [0, 1, 0, -1][Math.floor((t + sd) * 0.7) % 4]; p.armL = "low"; p.armR = "low";
+      if (bl) p.eyes = "shut";
+    } else {
+      p.bh = Math.floor((t + sd) * 0.8) % 2 ? 0 : -1; p.ex = [0, 1, 0, -1][Math.floor((t + sd) * 0.4) % 4];
+      if (bl) p.eyes = "shut";
+    }
+    fc.clearRect(0, 0, K.W, K.H);
+    K.figure(fc, p, t, sk);
+    c.drawImage(fig, Math.round(x - 24), Math.round(y - 41));
+    hits.push({ k: "p:" + id, b: [x - 9, y - 30, x + 9, y - 4], p: id });
+    if (st === "sleep") { const z = ((t + sd) * 0.6) % 1; c.globalAlpha = 1 - z; tx("Z", x + 8 + z * 4, y - 26 - z * 8, "#75746f"); c.globalAlpha = 1; }
+    if (st === "wait") tx("?", x + 9, y - 18 + (Math.floor(t * 2 + sd) % 2), "#e0675a");
+  };
+  const pname = (id) => ((S?.crew || []).find((w) => w.id === id)?.n || id).slice(0, 10).toUpperCase();
+  const fdraw = (t) => {
+    const ord = FU.map((u, k) => [u, k]).sort((a, b) => fl(a[0].i) - fl(b[0].i) || a[0].y + FC[a[0].i].h - (b[0].y + FC[b[0].i].h));
+    const hk = fedit && !fdrag && !ftool ? pick(fhov) : -1;
+    const sm = fedit ? { m: new Map(), wait: [] } : seats();
+    for (const [u, k] of ord) {
+      if (fdrag && fdrag.k === k) continue;
+      FU[k] && FC[u.i].d(u.x * 8, GO + u.y * 8, t);
+      if (sm.m.has(k)) person(sm.m.get(k).id, u.x * 8 + 8, GO + u.y * 8 + 14, t, true, sm.m.get(k).back);
+
+      if (fedit && k === fsel) box(u, "#4fb3e0", 0.95);
+      else if (k === hk) box(u, lt() ? "#000" : "#fff", 0.35);
+    }
+    for (const [k, { id, back }] of sm.m) { const u = FU[k]; if (!u || (fdrag && fdrag.k === k)) continue; const nm = pname(id), on = pst(id) === "work"; tx(nm, u.x * 8 + 8 - (K.textWidth(nm) >> 1), GO + u.y * 8 + (back ? 18 : -6), on ? hl("c:" + id) : "#6b6f76"); }
+    sm.wait.forEach((id, i) => { const x = 20 + i * 24, y = VH - 8; person(id, x, y, t, false); const nm = pname(id); tx(nm, x - (K.textWidth(nm) >> 1), y - 26, "#e0675a"); });
+    const g = ghost();
+    fbad = false;
+    if (g) {
+      const f = FC[g.i], ok = free(g.i, g.x, g.y, g.sk);
+      fbad = !ok;
+      c.globalAlpha = 0.22; px(g.x * 8, GO + g.y * 8, f.w * 8, f.h * 8, ok ? "#5cbf6a" : "#e0675a");
+      c.globalAlpha = ok ? 0.85 : 0.5; f.d(g.x * 8, GO + g.y * 8, t); c.globalAlpha = 1;
+    } else if (fdrag && !fhov) fbad = true;
+  };
+  const cell = (e) => {
+    const r = cv.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return null;
+    const x = (e.clientX - r.left) * VW / r.width, y = (e.clientY - r.top) * VH / r.height;
+    return { x: Math.floor(x / 8), y: Math.max(0, Math.floor((y - GO) / 8)) };
+  };
+  const fab = document.createElement("div");
+  fab.className = "fab"; fab.hidden = true;
+  fab.innerHTML = `<button type="button" data-a="dup" title="Duplicate (Ctrl+D)">Duplicate</button><button type="button" data-a="del" class="dng" title="Remove (Delete)">Remove</button>`;
+  $("stage").appendChild(fab);
+  const fabpos = () => {
+    const u = FU[fsel];
+    if (!fedit || !u || fdrag) { fab.hidden = true; return; }
+    const r = cv.getBoundingClientRect(), sr = $("stage").getBoundingClientRect(), k = r.width / VW, f = FC[u.i];
+    fab.hidden = false;
+    const x = r.left - sr.left + (u.x * 8 + f.w * 4) * k, yt = r.top - sr.top + (GO + u.y * 8 - 6) * k - 6;
+    fab.style.left = Math.round(Math.min(sr.width - fab.offsetWidth / 2 - 6, Math.max(fab.offsetWidth / 2 + 6, x))) + "px";
+    fab.style.top = Math.round(yt < 40 ? r.top - sr.top + (GO + (u.y + f.h) * 8) * k + 8 : yt - fab.offsetHeight) + "px";
+  };
+  const del = (k) => { if (k < 0 || !FU[k]) return; snap(); FU.splice(k, 1); fsel = -1; commit(); };
+  const dup = () => { const u = FU[fsel]; if (!u) return; const p = near(u.i, u.x + FC[u.i].w, u.y); if (!p) return; snap(); FU.push({ i: u.i, x: p[0], y: p[1] }); fsel = FU.length - 1; commit(); };
+  fab.addEventListener("pointerdown", (e) => e.stopPropagation());
+  fab.addEventListener("click", (e) => { const a = e.target.closest("[data-a]")?.dataset.a; if (a === "del") del(fsel); if (a === "dup") dup(); });
+  cv.addEventListener("pointerdown", (e) => {
+    if (!fedit || e.button) return;
+    const p = cell(e);
+    if (!p) return;
+    if (ftool) {
+      const g = ghost();
+      if (g && free(g.i, g.x, g.y, -1)) { snap(); FU.push({ i: g.i, x: g.x, y: g.y }); commit(); }
+      return;
+    }
+    const k = pick(p);
+    fsel = k; fch();
+    if (k >= 0) { fdrag = { k, dx: p.x - FU[k].x, dy: p.y - FU[k].y }; cv.setPointerCapture?.(e.pointerId); }
+  });
+  window.addEventListener("pointermove", (e) => {
+    if (!fedit) return;
+    fhov = cell(e);
+    cv.style.cursor = fdrag ? (fbad ? "no-drop" : "grabbing") : ftool ? (fbad ? "not-allowed" : "copy") : pick(fhov) >= 0 ? "grab" : "";
+  });
+  window.addEventListener("pointerup", (e) => {
+    if (!fdrag) return;
+    const d = fdrag; fdrag = null;
+    fhov = cell(e);
+    if (d.n) {
+      const g = fhov && { x: fhov.x - d.dx, y: fhov.y - d.dy };
+      if (g && free(d.n, g.x, g.y, -1)) { snap(); FU.push({ i: d.n, x: g.x, y: g.y }); fsel = FU.length - 1; commit(); }
+      document.body.classList.remove("fdg");
+      return;
+    }
+    const u = FU[d.k];
+    if (!u) return;
+    if (!fhov) { del(d.k); return; }
+    const x = fhov.x - d.dx, y = fhov.y - d.dy;
+    if ((x !== u.x || y !== u.y) && free(u.i, x, y, d.k)) { snap(); u.x = x; u.y = y; commit(); }
+  });
+  cv.addEventListener("contextmenu", (e) => { if (!fedit) return; e.preventDefault(); del(pick(cell(e))); });
+  document.addEventListener("keydown", (e) => {
+    if (!fedit || /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "")) return;
+    const m = e.metaKey || e.ctrlKey;
+    if (m && e.key.toLowerCase() === "z") { e.preventDefault(); const [a, b] = e.shiftKey ? [ffut, fhis] : [fhis, ffut]; if (a.length) { b.push(JSON.stringify(FU)); FU = JSON.parse(a.pop()); fsel = -1; commit(); } return; }
+    if (m && e.key.toLowerCase() === "d") { e.preventDefault(); dup(); return; }
+    if ((e.key === "Delete" || e.key === "Backspace") && fsel >= 0) { e.preventDefault(); del(fsel); return; }
+    const ar = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if (ar && fsel >= 0) { e.preventDefault(); const u = FU[fsel]; if (free(u.i, u.x + ar[0], u.y + ar[1], fsel)) { snap(); u.x += ar[0]; u.y += ar[1]; commit(); } return; }
+    if (e.key === "Escape" && (ftool || fsel >= 0)) { ftool = null; fsel = -1; fch(); e.stopPropagation(); }
+  }, true);
+  window.AO.furn = {
+    cat: FC,
+    prev: (g, i, w, h) => { const f = FC[i], s0 = c, sc = Math.min(w / (f.w * 8 + 4), h / (f.h * 8 + 20)); c = g; g.save(); g.clearRect(0, 0, w, h); g.translate(Math.round((w - f.w * 8 * sc) / 2), Math.round(h - 2 - f.h * 8 * sc)); g.scale(sc, sc); f.d(0, 0, 0); g.restore(); c = s0; },
+    edit: (on) => { fedit = on; if (!on) { fflush(); ftool = null; fsel = -1; fdrag = null; fab.hidden = true; cv.style.cursor = ""; } },
+    tool: (i) => { ftool = ftool === i ? null : i; fsel = -1; fch(); },
+    grab: (i) => { const f = FC[i]; ftool = null; fsel = -1; fdrag = { n: i, dx: f.w >> 1, dy: f.h >> 1 }; document.body.classList.add("fdg"); fch(); },
+    cur: () => ({ tool: ftool, sel: fsel >= 0 ? FU[fsel]?.i : null, n: FU.length, undo: fhis.length, redo: ffut.length }),
+    undo: () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true })),
+    redo: () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, shiftKey: true })),
+    del: () => del(fsel),
+    clear: () => { snap(); FU = []; fsel = -1; commit(); },
+    room: () => ({ w: GX, h: GY, min: ext() }),
+    size: (w, h) => { const [mw, mh] = ext(); w = Math.max(30, mw, Math.min(80, w | 0)); h = Math.max(16, mh, Math.min(40, h | 0)); room(w, h); clearTimeout(rsave); rsave = setTimeout(() => post({ office: { size: { w, h } } }, "/api/set").catch(() => {}), 400); return { w, h }; },
+    loadRoom: (z) => { const w = z?.w | 0, h = z?.h | 0; room(w >= 30 && w <= 80 ? w : 50, h >= 16 && h <= 40 ? h : 28); },
+    load: (a) => { FU = Array.isArray(a) ? a.filter((u) => FC[u?.i] && Number.isInteger(u.x) && Number.isInteger(u.y)).map((u) => ({ i: u.i, x: u.x, y: u.y })) : []; },
+    on: (f) => { fcb = f; },
+    tick: fabpos,
+  };
+  window.AO.surf = {
+    get: (k) => ({ ...SU[k] }), pats: PS, eff: scol, pat,
+    set: (k, f) => { SU = { ...SU, [k]: one(k, f) }; },
+    load: (o) => { SU = { floor: one("floor", o?.floor), wall: one("wall", o?.wall) }; },
+  };
+
+
 
   const desk = (x, y, col) => {
     if (lt()) {
@@ -196,116 +350,15 @@
     px(x - 8, y + 6, 16, 1, col);
   };
 
-  const screen = (x, y, w, st, sk, t, so) => {
-    px(x, y, w, 9, "#2a2c32");
-    px(x + 1, y + 1, w - 2, 7, so ? "#0b0c0e" : st === "work" ? "#0f1a1e" : "#0b0c0e");
-    px(x + (w >> 1) - 1, y + 9, 2, 2, "#2a2c32");
-    if (so) { if (Math.floor(t * 2) % 2) px(x + (w >> 1) - 1, y + 3, 2, 2, "#e0675a"); return; }
-    if (st === "work") {
-      const sc = Math.floor(t * 6);
-      for (let i = 0; i < 3; i++) px(x + 2, y + 2 + i * 2, 2 + ((sc + i) * 7) % (w - 5), 1, i === 2 ? sk.light : sk.dark);
-    } else if (st !== "sleep") {
-      px(x + 2, y + 2, 3, 1, sk.dark);
-      if (Math.floor(t * 1.2) % 2) px(x + 6, y + 2, 1, 1, sk.light);
-    }
-  };
 
-  const acc = {
-    hunter: (r, sk, t) => { K.px(fc, r.left - 1, r.top - 1, sk.dark, r.bw + 2, 1); K.px(fc, r.left + 2, r.top - 3, sk.dark, r.bw - 4, 2); K.px(fc, r.cx - 1, r.top - 4, "#5cbf6a", 2, 1); },
-    scout: (r, sk, t) => { K.px(fc, r.cx, r.top - 4, sk.dark, 1, 4); K.px(fc, r.cx - 1, r.top - 6, Math.floor(t * 3) % 2 ? "#e8e6df" : sk.light, 3, 2); },
-    guard: (r, sk) => { K.draw(fc, ["sss", "sws", "sss", ".s."], r.left + 2, r.top + 4, { body: sk.body }); },
-    vet: (r) => { const y = r.eyeY - 1; for (const x of [r.cx - 5, r.cx + 2]) { K.px(fc, x, y, "#e8e6df", 4, 1); K.px(fc, x, y + 3, "#e8e6df", 4, 1); K.px(fc, x, y, "#e8e6df", 1, 4); K.px(fc, x + 3, y, "#e8e6df", 1, 4); } K.px(fc, r.cx - 1, y + 1, "#e8e6df", 3, 1); },
-    repro: (r, sk, t, p) => { const x = r.handR.x, y = r.handR.y - 5 + (p.mood === "work" ? Math.round(Math.sin(t * 4)) : 0); K.draw(fc, [".ww.", "w..w", "w..w", ".ww.", "...g", "....g"], x, y, {}); },
-    design_fixer: (r, sk) => { K.px(fc, r.handR.x, r.handR.y - 4, "#86704f", 1, 4); K.px(fc, r.handR.x, r.handR.y - 5, "#d9b44a", 1, 1); K.px(fc, r.handR.x - 1, r.handR.y - 7, sk.light, 3, 2); },
-    tester: (r) => { K.px(fc, r.handR.x - 1, r.handR.y - 5, "#e8e6df", 4, 5); K.px(fc, r.handR.x, r.handR.y - 4, "#469359", 2, 1); K.px(fc, r.handR.x, r.handR.y - 2, "#469359", 2, 1); },
-    architect: (r) => { K.px(fc, r.handR.x - 1, r.handR.y - 5, "#4fb3e0", 4, 5); K.px(fc, r.handR.x, r.handR.y - 4, "#e8e6df", 2, 1); K.px(fc, r.handR.x, r.handR.y - 2, "#e8e6df", 2, 1); },
-    reviewer: (r) => { K.px(fc, r.handR.x, r.handR.y - 4, "#e0675a", 1, 4); K.px(fc, r.handR.x, r.handR.y, "#e8e6df", 1, 1); },
-    desk: (r) => { K.px(fc, r.cx - 2, r.top + 5, "#f4f1e8", 5, 1); K.px(fc, r.cx, r.top + 6, "#d9b44a", 1, 4); K.px(fc, r.cx - 1, r.top + 8, "#d9b44a", 3, 2); },
-    watcher: (r) => { K.px(fc, r.left - 1, r.top - 2, "#55524b", r.bw + 2, 1); K.px(fc, r.left - 2, r.top - 1, "#55524b", 1, 4); K.px(fc, r.right + 1, r.top - 1, "#55524b", 1, 4); K.px(fc, r.left - 3, r.top + 1, "#e8e6df", 2, 3); K.px(fc, r.right + 1, r.top + 1, "#e8e6df", 2, 3); },
-  };
 
-  const FIT = [
-    () => {},
-    (r, a) => { K.px(fc, r.left + 2, r.top - 2, a, r.bw - 4, 2); K.px(fc, r.right - 3, r.top - 1, a, 5, 1); },
-    (r, a) => { K.px(fc, r.left + 2, r.top - 3, a, r.bw - 4, 3); K.px(fc, r.cx - 1, r.top - 5, "#e8e6df", 2, 2); },
-    (r, a) => { K.px(fc, r.left, r.top + 1, a, r.bw, 1); K.px(fc, r.left - 2, r.top + 2, a, 2, 1); },
-    (r, a) => { K.draw(fc, ["x.x", "xxx", "x.x"].map((l) => l.replace(/x/g, "1")), r.cx - 1, r.top + 6, { c1: a }); },
-    (r, a) => { K.px(fc, r.left + 1, r.top + 6, a, r.bw - 2, 2); K.px(fc, r.right - 4, r.top + 8, a, 2, 3); },
-    (r) => { K.px(fc, r.cx - 5, r.eyeY - 1, "#101112", 4, 2); K.px(fc, r.cx + 2, r.eyeY - 1, "#101112", 4, 2); K.px(fc, r.cx - 1, r.eyeY - 1, "#101112", 3, 1); },
-    (r, a) => { K.px(fc, r.left, r.top - 2, a, r.bw, 1); K.px(fc, r.left - 2, r.top, a, 2, 3); K.px(fc, r.right, r.top, a, 2, 3); },
-    (r, a) => { K.px(fc, r.cx, r.top + 6, a, 1, 3); K.px(fc, r.cx - 1, r.top + 9, a, 3, 1); },
-    (r, a) => { K.px(fc, r.cx - 3, r.top - 6, a, 7, 5); K.px(fc, r.cx - 5, r.top - 1, a, 11, 1); },
-  ];
-  const HAT = (r, t) => { K.draw(fc, ["..1..", ".121.", "11211"], r.cx - 2, r.top - 4, { c1: ["#4fb3e0", "#d0649f", "#5cbf6a"][Math.floor(t * 4) % 3], c2: "#e8e6df" }); };
 
-  const crab = (n, x, y, t, o = {}) => {
-    const bw = S?.w?.[n] || { st: "idle" };
-    const w = o.st ? { st: o.st, t: 0, hold: o.st !== "work" && bw.hold } : bw;
-    const now = S ? S.t + (performance.now() - last) : Date.now();
-    const off = S?.o?.off;
-    const mood = now - (w.t || 0) < 6000 ? w.mood : "";
-    const st = o.awake ? w.st : w.hold || (S?.o?.pause && w.st !== "work") || S?.o?.man ? "sleep" : off && w.st !== "work" ? "off" : w.st;
-    const sd = (o.seed ?? n.length) * 1.7;
-    const p = K.pose();
-    p.legs = "sit";
-    p.mouth = null;
-    const bl = Math.floor((t + sd) * 10) % 47 === 0;
-    const pt = party();
-    if (pt) {
-      p.armL = "top"; p.armR = "top"; p.eyes = "glad"; p.mouth = "wide";
-      p.dy = Math.floor(t * 5 + sd) % 2 ? -3 : 0;
-      p.aL = [0, Math.floor(t * 5 + sd) % 2 ? -1 : 0]; p.aR = [0, Math.floor(t * 5 + sd) % 2 ? 0 : -1];
-    } else if (st === "work") {
-      const k = Math.floor(t * 9 + sd);
-      p.armL = "front"; p.armR = "front";
-      p.aL = [0, k % 2 ? -1 : 0]; p.aR = [0, k % 2 ? 0 : -1];
-      p.ex = -1; p.ey = 1;
-      p.dy = Math.floor(t * 4 + sd) % 4 === 0 ? -1 : 0;
-      if (Math.floor(t * 0.7 + sd) % 5 === 0) { p.ex = 0; p.ey = -1; p.eyes = "half"; }
-      if (bl) p.eyes = "shut";
-    } else if (st === "sleep") {
-      p.eyes = "shut"; p.bh = -1; p.dy = 1; p.armL = "low"; p.armR = "low";
-    } else if (st === "off") {
-      p.eyes = "half"; p.mouth = "flat"; p.bh = -1;
-    } else {
-      p.bh = Math.floor((t + sd) * 0.8) % 2 ? 0 : -1;
-      p.ex = [0, 1, 0, -1][Math.floor((t + sd) * 0.4) % 4];
-      if (bl) p.eyes = "shut";
-    }
-    if (!pt && mood === "ok") { p.eyes = "glad"; p.mouth = "smile"; p.armL = "top"; p.armR = "top"; p.dy = Math.floor(t * 6) % 2 ? -2 : 0; }
-    else if (!pt && (mood === "sad" || mood === "err")) { p.eyes = "sad"; p.mouth = "sad"; p.armL = "low"; p.armR = "low"; }
-    p.mood = st;
-    const sk = st === "off" ? dim(SK[n]) : SK[n];
-    fc.clearRect(0, 0, K.W, K.H);
-    const { r } = K.figure(fc, p, t, sk);
-    if (o.fit) FIT[o.fit % FIT.length](r, FITC[(o.fc ?? o.fit) % FITC.length]);
-    if (acc[n]) acc[n](r, sk, t, p);
-    if (pt) HAT(r, t + sd);
-    const z = o.z || 1;
-    c.drawImage(fig, Math.round(x - 24 * z), Math.round(y - 41 * z), K.W * z, K.H * z);
-    if (st === "sleep" && !pt) {
-      const k = ((t + sd) * 0.6) % 1;
-      c.globalAlpha = 1 - k;
-      tx("Z", x + 8 + k * 4, y - 26 - k * 8, "#75746f");
-      c.globalAlpha = 1;
-    }
-    return st;
-  };
 
-  let hits = [], hov = null, hovT = null, mx = 0, my = 0;
-  const seat = (n, x, y, t, o, lb, hot) => {
-    hits.push({ k: "w:" + n + ":" + (o.q?.id ?? o.vk ?? ""), b: [x - 16, y - 30, x + 18, y + 20], n, q: o.q });
-    const st = crab(n, x + 4, y + 2, t, o);
-    desk(x, y, SK[n].dark);
-    screen(x - 13, y - 11, 11, st, SK[n], t + (o.seed || 0), st === "off");
-    if (lb) tx(lb, x - (K.textWidth(lb) >> 1), y + 16, hot ? hl(n) : "#4a4d54");
-  };
+  let hits = [], hov = null, mx = 0, my = 0;
 
-  const RL = (id) => { if (id === "local") return "ME"; const m = id.match(/^([a-z])[a-z]*[-_ ]?(\d+)$/i); return (m ? m[1] + m[2] : id.replace(/[^a-z0-9]/gi, "")).slice(0, 3).toUpperCase(); };
-  const RK = () => (S?.hs || []).filter((h) => h.on_).slice(0, 7).map((h) => [h.id, RL(h.id)]);
   const rack = (x, y, t, h, lb) => {
     hits.push({ k: "h:" + h, b: [x - 9, y - 41, x + 9, y + 21], h });
-    const jbs = (S?.q || []).filter((q) => q.h === h && ["plan", "repro", "fix", "ci", "design", "test", "review", "gate", "submit"].includes(q.st));
+    const jbs = (S?.q || []).filter((q) => q.h === h && ["repro", "fix", "ci", "review", "gate", "submit"].includes(q.st));
     const ci = jbs.some((q) => q.st === "ci"), busy = jbs.length > 0;
     const down = S?.o?.net?.[h] === false;
     px(x - 7, y - 34, 14, 46, "#1c1e22");
@@ -325,143 +378,61 @@
     tx(lb, x - (K.textWidth(lb) >> 1), y + 15, down ? "#e0675a" : busy ? "#b9bcc2" : "#4a4d54");
   };
 
-  const short = (q) => {
-    const n = String(q.pr || q.num || "H" + q.id), r = (q.repo.split("/")[1] || q.repo).toUpperCase();
-    for (let k = 3; k > 0; k--) if (K.textWidth(r.slice(0, k) + n) <= 30) return r.slice(0, k) + n;
-    return n;
-  };
 
-  const intake = (t) => {
-    seat("scout", 34, 74, t, {}, "SCOUT", S?.w?.scout?.st === "work");
-    seat("guard", 74, 74, t, { seed: 3 }, "GUARD", S?.w?.guard?.st === "work");
-    const vn = S?.o?.vn ?? (S?.w?.vet?.st === "work" ? 1 : 0);
-    for (let k = 0; k < 3; k++) seat("vet", 114 + k * 36, 74, t, { st: k < vn ? "work" : "idle", seed: 11 + k, fit: k ? k + 2 : 0, fc: k + 4, vk: k }, k === 1 ? "VET" : "", k < vn);
-    seat("watcher", 226, 74, t, { seed: 7 }, "WATCHER", S?.w?.watcher?.st === "work");
-    seat("architect", 272, 74, t, { seed: 9 }, "ARCH", S?.w?.architect?.st === "work");
-    px(334, 128, 120, 1, "#1d1f24");
 
-  };
 
-  const teams = (t) => {
-    const ap = (S?.n?.approve || 0) > 0;
-    const tj = TEAM.map(([n, stg]) => [n, (S?.q || []).filter((q) => q.st === stg || (n === "submit" && q.st === "gate"))]);
-    const lay = (m) => {
-      const it = [];
-      for (const [n, js] of tj) {
-        if (!js.length) it.push({ n, q: null, f: true, c: 0 });
-        else js.slice(0, m).forEach((q, k) => it.push({ n, q, f: k === 0, c: js.length }));
-      }
-      let x = 22, row = 0, pv = null;
-      const lim = (r) => (r ? 424 : ap ? 342 : 434);
-      for (const i of it) {
-        if (pv && i.n !== pv) x += 10;
-        const tw = (it.filter((y) => y.n === i.n).length - 1) * 32;
-        if (i.f && row === 0 && x > 22 && x + tw > lim(0) && 22 + tw <= lim(1)) { row++; x = 22; }
-        if (x > lim(row)) { row++; x = 22; }
-        i.x = x; i.y = 164 + row * 68; i.r = row; x += 32; pv = i.n;
-      }
-      return it;
-    };
-    let m = Math.max(1, ...tj.map(([, js]) => js.length)), it = lay(m);
-    while (m > 1 && it.some((i) => i.r > 1)) it = lay(--m);
-    for (const i of it) {
-      if (i.f) {
-        AN[i.n] = [i.x, i.y];
-        tx((i.n === "design_fixer" ? "DESIGN" : NM[i.n].toUpperCase()) + (i.c > 1 ? " X" + i.c : ""), i.x - 12, i.y - 36, i.c ? hl(i.n) : "#4a4d54");
-      }
-      if (!i.q) seat(i.n, i.x, i.y, t, { seed: i.x }, "", false);
-      else seat(i.n, i.x, i.y, t, { st: "work", seed: i.q.id, fit: (i.q.id * 7) % 9 + 1, fc: i.q.id * 3, q: i.q }, short(i.q), true);
-    }
-  };
 
-  const confetti = (t) => {
-    if (!party()) return;
-    const cs = ["#4fb3e0", "#d0649f", "#5cbf6a", "#9c7ae0", "#e0675a", "#e8e6df"];
-    for (let i = 0; i < 70; i++) {
-      const sx = (i * 97.13) % VW, sp = 18 + (i % 7) * 6;
-      const y = ((t * sp + i * 37) % (VH + 20)) - 10;
-      px(sx + Math.sin(t * 2 + i) * 4, y, 2, 1 + (i % 2), cs[i % cs.length]);
-    }
-  };
 
-  const radio = (x, y, t) => {
-    const on = !!(S && S.q.some((q) => q.st === "ci"));
-    px(x, y, 22, 12, "#2a2c32");
-    px(x + 1, y + 1, 20, 10, "#1c1e22");
-    for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) px(x + 3 + i * 2, y + 3 + j * 2, 1, 1, "#3d4045");
-    px(x + 13, y + 3, 6, 2, on ? "#5cbf6a" : "#3d4045");
-    const bar = (i) => (on ? 1 + Math.floor((Math.sin(t * (6 + i * 1.7) + i) + 1) * 1.5) : 1);
-    for (let i = 0; i < 3; i++) px(x + 13 + i * 2, y + 10 - bar(i), 1, bar(i), on ? "#5cbf6a" : "#3d4045");
-    px(x + 4, y - 3, 1, 3, "#3d4045");
-    if (on) for (let k = 0; k < 2; k++) {
-      const p = ((t * 0.5 + k / 2) % 1);
-      c.globalAlpha = 1 - p;
-      K.draw(c, ["..ww", "..w.", "ww..", "ww.."], x + 22 + k * 4 + Math.sin(t * 2 + k) * 2, y - p * 14, {});
-      c.globalAlpha = 1;
-    }
-  };
-
-  // The front desk wing: an entrance door in the top wall, a carpet and the
-  // boss, drawn twice the size of the other workers, at a big black desk.
-  const wing = (t) => {
-    const l = lt(), [x, y] = AN.desk;
-    px(464, 35, 1, VH - 35, l ? "#d5dce4" : "#16171a");
-    px(x - 17, 8, 34, 26, l ? "#9aa3ad" : "#24272d");
-    px(x - 15, 10, 30, 24, l ? "#5a5f69" : "#17181c");
-    px(x - 14, 11, 13, 22, l ? "#666c77" : "#1b1c21");
-    px(x + 1, 11, 13, 22, l ? "#666c77" : "#1b1c21");
-    px(x - 4, 21, 2, 2, "#d9b44a"); px(x + 3, 21, 2, 2, "#d9b44a");
-    px(x - 9, 35, 18, y - 82, l ? "#d7b9bd" : "#2a1316");
-    px(x - 8, 35, 16, y - 82, l ? "#e4c9cc" : "#341719");
-    const busy = !!window.AO.deskBusy;
-    hits.push({ k: "w:desk:", b: [x - 32, y - 52, x + 34, y + 20], n: "desk" });
-    crab("desk", x + 3, y + 13, t, { st: busy ? "work" : "idle", awake: true, seed: 5, z: 3 });
-    px(x - 37, y, 74, 5, l ? "#3a3d44" : "#1d1e23");
-    px(x - 37, y + 5, 74, 12, l ? "#2b2d33" : "#131417");
-    px(x - 37, y + 5, 74, 1, "#d9b44a");
-    px(x - 34, y + 17, 3, 4, l ? "#2b2d33" : "#0f1012");
-    px(x + 31, y + 17, 3, 4, l ? "#2b2d33" : "#0f1012");
-    px(x - 9, y + 9, 18, 4, "#d9b44a");
-    if (busy) px(x - 3, y - 2, 6, 2, Math.floor(t * 6) % 2 ? "#d9b44a" : "#8a7432");
-    tx("FRONT DESK", x - (K.textWidth("FRONT DESK") >> 1), y + 26, busy ? "#d9b44a" : "#4a4d54");
-  };
   const plant = (x, y) => {
     px(x - 3, y, 7, 6, "#2a2c32");
     K.draw(c, ["..e.e..", ".eEe.e.", "e.eEee.", ".eeEe.e", "..eEe.."], x - 3, y - 5, {});
   };
 
+  // A charcoal suit with white eyes: readable on the dark floor and in light mode.
+  const BS = { body: "#3a3d45", dark: "#1d1f24", light: "#8a8f99", eye: "#ecebe6" };
+  const boss = (t) => {
+    const x = VW - 26, y = GO + 13, busy = !!window.AO.deskBusy, p = K.pose();
+    px(x - 10, 5, 20, 30, "#1c1e22"); px(x - 8, 7, 16, 28, "#0d0e10"); px(x + 4, 22, 2, 2, "#d9b44a");
+    p.legs = "stand";
+    if (busy) { const q = Math.floor(t * 9); p.armL = "front"; p.armR = "front"; p.aL = [0, q % 2 ? -1 : 0]; p.aR = [0, q % 2 ? 0 : -1]; p.ex = -1; p.ey = 1; }
+    else { p.bh = Math.floor(t * 0.8) % 2 ? 0 : -1; p.ex = [0, 1, 0, -1][Math.floor(t * 0.4) % 4]; if (Math.floor(t * 10) % 47 === 0) p.eyes = "shut"; }
+    fc.clearRect(0, 0, K.W, K.H);
+    K.figure(fc, p, t, BS);
+    c.drawImage(fig, Math.round(x - 24), Math.round(y - 41));
+    tx("BOSS", x - (K.textWidth("BOSS") >> 1), y + 3, "#a9a8a2");
+    hits.push({ k: "w:desk", b: [x - 10, y - 32, x + 10, y + 8], n: "desk" });
+  };
+
   let last = performance.now();
-  const frame = () => {
+  let sgw = 0, sgh = 0, lf = 0;
+  new ResizeObserver(([e]) => { sgw = e.contentRect.width; sgh = e.contentRect.height; }).observe($("stage"));
+  const frame = (now) => {
+    requestAnimationFrame(frame);
+    if (document.hidden || document.body.classList.contains("fed") || !sgw || now - lf < (fedit ? 15 : 45)) return;
+    lf = now;
     const t = (performance.now() - t0) / 1000;
     c.imageSmoothingEnabled = false;
     fc.imageSmoothingEnabled = false;
     hits = [];
     floor(t);
-    board(t);
-    radio(356, 9, t);
-    plant(312, 112);
-    plant(456, 210);
-    if (S?.orch) wing(t);
-    paths(t);
-    intake(t);
-    RK().forEach(([h, lb], i) => rack(336 + i * 19, 100, t, h, lb));
-    teams(t);
-    confetti(t);
+    fdraw(t);
+    if (S?.orch && !fedit) boss(t);
+    window.AO.furn.tick();
     const hh = hov && hits.find((h) => h.k === hov);
     if (hh) {
       const [x0, y0, x1, y1] = hh.b, cl = "#75746f";
       for (const [x, y, dx, dy] of [[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]]) { px(dx > 0 ? x : x - 3, y, 4, 1, cl); px(x - (dx > 0 ? 0 : 1), dy > 0 ? y : y - 3, 1, 4, cl); }
     }
     if (S?.o?.off) { c.globalAlpha = 0.25; px(0, 35, VW, VH - 35, "#000"); c.globalAlpha = 1; }
-    const dp = window.devicePixelRatio || 1, sg = $("stage");
-    const fit = Math.max(1, Math.min((sg.clientWidth - 4) / VW, (sg.clientHeight - 4) / VH));
-    const sc = Math.max(2, Math.ceil(fit * dp));
-    const bw = VW * sc, bh = VH * sc;
-    if (cv.width !== bw || cv.height !== bh) { cv.width = bw; cv.height = bh; }
-    cv.style.width = Math.floor(VW * fit) + "px";
-    cv.style.height = Math.floor(VH * fit) + "px";
+    const dp = window.devicePixelRatio || 1;
+    const kf = Math.min((sgw - 2) * dp / VW, (sgh - 2) * dp / VH), ks = kf >= 1.25 ? kf : Math.max(1, Math.floor(kf)), sc = Math.max(1, Math.ceil(ks));
+    cv.classList.toggle("soft", ks % 1 > 0.01 && ks < 1.75);
+    if (cv.width !== VW * sc || cv.height !== VH * sc) { cv.width = VW * sc; cv.height = VH * sc; }
+    const cw = Math.floor(VW * ks / dp) + "px", ch = Math.floor(VH * ks / dp) + "px";
+    if (cv.style.width !== cw || cv.style.height !== ch) { cv.style.width = cw; cv.style.height = ch; }
     cx.imageSmoothingEnabled = false;
-    cx.drawImage(off, 0, 0, bw, bh);
+    cx.drawImage(off, 0, 0, VW * sc, VH * sc);
+    if (fedit) { cx.globalAlpha = lt() ? 0.06 : 0.05; cx.fillStyle = lt() ? "#000" : "#fff"; for (let x = 0; x <= GX; x++) cx.fillRect(x * 8 * sc, GO * sc, 1, GY * 8 * sc); for (let y = 0; y <= GY; y++) cx.fillRect(0, (GO + y * 8) * sc, VW * sc, 1); cx.globalAlpha = 1; }
     const mg = $("mg");
     if (party()) {
       if (mg.hidden || mg.dataset.k !== S.lm.repo + S.lm.num) {
@@ -470,7 +441,6 @@
         mg.hidden = false;
       }
     } else if (!mg.hidden) mg.hidden = true;
-    requestAnimationFrame(frame);
   };
 
   const ago = (t) => {
@@ -479,9 +449,9 @@
   };
   const hm = (t) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   const kt = (n) => (n > 999999 ? (n / 1e6).toFixed(1) + "M" : n > 999 ? Math.round(n / 1000) + "k" : String(n));
-  const STC = { approve: "ok", need_user: "warn", plan: "work", ready: "", vet: "", repro: "work", fix: "work", design: "work", test: "work", ci: "work", review: "work", gate: "work", submit: "work", done: "ok", drop: "bad" };
+  const STC = { approve: "ok", ready: "", vet: "", repro: "work", fix: "work", ci: "work", review: "work", gate: "work", submit: "work", done: "ok", drop: "bad" };
 
-  const GEAR = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M9.4 1l.3 1.8c.4.1.8.3 1.1.5l1.5-1 1.4 1.4-1 1.5c.2.3.4.7.5 1.1L15 6.6v2l-1.8.3c-.1.4-.3.8-.5 1.1l1 1.5-1.4 1.4-1.5-1c-.3.2-.7.4-1.1.5L9.4 15h-2l-.3-1.8c-.4-.1-.8-.3-1.1-.5l-1.5 1-1.4-1.4 1-1.5c-.2-.3-.4-.7-.5-1.1L1.8 8.6v-2l1.8-.3c.1-.4.3-.8.5-1.1l-1-1.5 1.4-1.4 1.5 1c.3-.2.7-.4 1.1-.5L7.4 1h2zM8.4 5.6a2 2 0 100 4 2 2 0 000-4z"/></svg>`;
+  const GEAR = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>`;
   window.AO.GEAR = GEAR;
   const mdn = (md) => {
     if (!md) return "";
@@ -490,26 +460,42 @@
     return p === "ollama" ? c + " · local" : p === "codex" ? c + " · ChatGPT" : p === "anthropic" ? c + " · API" : c;
   };
   window.AO.mdn = mdn;
+  const XP = ["#c77dba", "#6fa8dc", "#e39b6b", "#7fc8a9", "#b5a3e0", "#e0848f", "#8fb3c9", "#c9b37f"];
+  let tkeys = "";
   const tiles = () => {
     const el = $("tiles");
+    const po = window.AO.pord || [], xk = Object.keys(S.w).filter((k) => k.startsWith("x:")).sort((a, b) => (po.indexOf(a.slice(2)) + 99) % 99 - (po.indexOf(b.slice(2)) + 99) % 99);
+    xk.forEach((k, i) => { const c = XP[i % XP.length]; SK[k] = { body: c, dark: c, light: c, tx: txc(c) }; NM[k] = S.w[k].nm || k.slice(2); });
+    const CP = ["#e39b6b", "#7fc8a9", "#b5a3e0", "#6fa8dc", "#e0848f", "#8fb3c9", "#c77dba", "#c9b37f"];
+    const ck = (S.crew || []).filter((w) => (S.staff || []).includes(w.id)).map((w, i) => { const k = "c:" + w.id; SK[k] = { body: CP[i % CP.length], dark: CP[i % CP.length], light: CP[i % CP.length], tx: txc(CP[i % CP.length]) }; NM[k] = w.n || w.id; return k; });
+    const all = [...ck, ...ORD, ...xk];
+    if (all.join() !== tkeys) { tkeys = all.join(); el.innerHTML = ""; el.style.gridTemplateColumns = all.length > 10 ? "repeat(auto-fill, minmax(124px, 1fr))" : `repeat(${all.length}, minmax(0, 1fr))`; }
     if (!el.children.length) {
-      el.innerHTML = ORD.map((n) => `<div class="tile" data-w="${n}"><div class="hd"><span class="dot" style="background:${SK[n].body}"></span>${NM[n]}<span class="md"></span>${n === "ci" || n === "submit" ? "" : `<button class="gear" title="Model and provider" aria-label="${NM[n]} settings">${GEAR}</button>`}</div><div class="sy"></div><div class="stt"></div><div class="ft"></div></div>`).join("");
+      el.innerHTML = all.map((n) => `<div class="tile" data-w="${n}"><div class="hd"><span class="dot" style="background:${SK[n].body}"></span><button type="button" class="tn" ${n.startsWith("c:") ? `aria-label="Open ${esc(NM[n])} in Team"` : `aria-label="Pause ${esc(NM[n])}" aria-pressed="false"`}>${esc(NM[n])}</button><span class="md"></span>${n === "ci" || n === "submit" || n.startsWith("x:") || n.startsWith("c:") ? "" : `<button class="gear" title="Model and provider" aria-label="${esc(NM[n])} settings">${GEAR}</button>`}</div><div class="sy"></div><div class="stt"></div><div class="ft"></div></div>`).join("");
       el.onclick = (e) => {
         const g = e.target.closest(".gear");
         if (g) { e.stopPropagation(); window.AO.role && window.AO.role(g.closest(".tile").dataset.w); return; }
-        const t = e.target.closest(".tile"); if (t) post({ a: "hold", w: t.dataset.w, on: !S.w[t.dataset.w].hold }).then(apply);
+        const t = e.target.closest(".tile"); if (t && t.dataset.w.startsWith("c:")) { window.AO.go && window.AO.go("team"); return; } if (t) post({ a: "hold", w: t.dataset.w, on: !(S.w[t.dataset.w] || {}).hold }).then(apply);
       };
-      el.onmousemove = (e) => {
-        const t = e.target.closest(".tile");
-        hovT = t && !e.target.closest(".gear") ? t.dataset.w : null;
-        mx = e.clientX; my = e.clientY;
-        tip();
-      };
-      el.onmouseleave = () => { hovT = null; tip(); };
     }
     const STG = { architect: ["plan"], hunter: ["hunt"], repro: ["repro"], fixer: ["fix"], ci: ["ci"], design_fixer: ["design"], tester: ["test"], reviewer: ["review"], submit: ["gate", "submit"] };
     for (const t of el.children) {
-      const n = t.dataset.w, w = S.w[n] || { st: "idle", say: "", md: "", tk: 0 };
+      const n = t.dataset.w;
+      if (n.startsWith("c:")) {
+        const id = n.slice(2), cw = (S.crew || []).find((x) => x.id === id) || {}, rs = (S.rn || []).filter((r) => r.st === "run" && r.w === id);
+        const ev = (S.ev || []).find((e) => e.w === n);
+        const nd = seats().wait.includes(id);
+        if (nd) { t.className = "tile nodesk"; t.style.order = 0; t.querySelector(".md").textContent = ""; t.querySelector(".sy").textContent = "Place a desk with a chair in Edit office"; t.querySelector(".stt").textContent = "No desk"; t.querySelector(".ft").textContent = ""; t.title = "Needs a desk to work"; continue; }
+        t.className = "tile " + (rs.length ? "work" : "");
+        t.style.order = rs.length ? 0 : 1;
+        t.querySelector(".md").textContent = mdn(cw.md || "");
+        t.querySelector(".sy").textContent = rs.length ? rs[0].n : ev ? `${ago(ev.t)} · ${ev.m}` : "…";
+        t.querySelector(".stt").textContent = rs.length ? "Work" + (rs.length > 1 ? " ×" + rs.length : "") : "idle";
+        t.querySelector(".ft").textContent = "";
+        t.title = (cw.r ? cw.r + " · " : "") + "open Team";
+        continue;
+      }
+      const w = S.w[n] || { st: "idle", say: "", md: "", tk: 0 };
       const cn = STG[n] ? S.q.filter((q) => STG[n].includes(q.st)).length : n === "vet" ? S.o.vn || 0 : 0;
       const wk = cn > 0 || w.st === "work";
       t.querySelector(".md").textContent = n === "ci" || n === "submit" ? "no model" : mdn(w.md);
@@ -517,14 +503,18 @@
       const ev = !w.say && (S.ev || []).find((e) => e.w === n);
       t.querySelector(".sy").textContent = w.say || (ev ? `${ago(ev.t)} · ${ev.m}` : "…");
       t.className = "tile " + (wk ? "work" : "") + (w.hold ? " hold" : "");
+      t.style.order = w.hold ? 2 : wk ? 0 : 1;
       t.querySelector(".stt").textContent = w.hold ? "paused" : wk ? "work" + (cn > 1 ? " ×" + cn : "") : w.st === "sleep" ? "sleep" : "idle";
       t.querySelector(".ft").textContent = w.tk ? kt(w.tk) + " tok" : "";
+      t.title = (DESC[n] ? DESC[n] + "\n\n" : "") + (w.hold ? "click to resume" : "click to pause");
     }
   };
 
   const rn = (j) => (j.repo.split("/")[1] || j.repo) + (j.num ? "#" + j.num : "");
   const sel = new Set();
-  const jrow = (j, x) => `<div class="row${j.st === "approve" ? " apr" : ""}">${j.st === "approve" && x ? `<input type="checkbox" class="bk" data-k="${j.id}" ${sel.has(j.id) ? "checked" : ""} aria-label="select">` : ""}<span class="pill ${STC[j.st] || ""}">${esc(j.kind !== "fix" ? j.kind + "·" + j.st : j.st)}</span><div class="ti"><a class="a" href="#" data-j="${j.id}">${esc(j.title)}</a><div class="w">${esc(j.st === "ci" && S.cil[j.id] ? S.cil[j.id] : j.why || "")}</div></div><span class="rp">${esc(rn(j))}${j.st === "approve" ? ` <button class="go" data-j="${j.id}">review</button>` : ""}${j.st === "need_user" ? ` <button class="go" data-j="${j.id}">reply</button>` : ""}${x && j.st !== "approve" ? ` <button class="x" data-d="${j.id}" title="drop">✕</button>` : ""}${!x && j.st === "drop" && ["fix", "build", "design_fix", "test_app", "architect", "epic_pr"].includes(j.kind) ? ` <button class="x" data-rq="${j.id}" title="try again">↻</button>` : ""}</span></div>`;
+  const QN = { vet: "Checking", ready: "Ready", plan: "Planning", need_user: "Needs your answer", hunt: "Hunting", repro: "Reproducing", fix: "Fixing", design: "Fixing design", test: "Testing the app", ci: "Testing", review: "Reviewing", gate: "Final check", approve: "Waiting for you", submit: "Submitting", done: "Done", drop: "Dropped", park: "Parked" };
+  const KN = { hunt: "Hunt", rebase: "Rebase", review: "Review changes", feat: "Feature" };
+  const jrow = (j, x) => `<div class="row jr${j.st === "approve" || j.st === "need_user" ? " apr" : ""}">${j.st === "approve" && x ? `<input type="checkbox" class="bk" data-k="${j.id}" ${sel.has(j.id) ? "checked" : ""} aria-label="select">` : ""}<div class="ti"><a class="a" href="#" data-j="${j.id}">${esc(j.title)}</a><div class="w"><span class="stt st-${esc(j.st)}"${j.st === "need_user" ? ' style="color:var(--info)"' : ""}>${esc((j.kind !== "fix" ? (KN[j.kind] || j.kind) + " · " : "") + (QN[j.st] || j.st))}</span><span>${esc(rn(j))}</span>${(j.st === "ci" && S.cil[j.id]) || j.why ? `<span class="wy">${esc(j.st === "ci" && S.cil[j.id] ? S.cil[j.id] : j.why)}</span>` : ""}</div></div><span class="rp">${j.st === "approve" ? `<button class="go" data-j="${j.id}">Review</button>` : ""}${j.st === "need_user" ? `<button class="go" data-j="${j.id}">Reply</button>` : ""}${x && j.st !== "approve" ? `<button class="x" data-d="${j.id}" title="Drop" aria-label="Drop"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>` : ""}${!x && j.st === "drop" && ["fix", "build", "design_fix", "test_app", "architect", "epic_pr"].includes(j.kind) ? `<button class="x" data-rq="${j.id}" title="Try again" aria-label="Try again"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.6M4 4v4.6h4.6"/></svg></button>` : ""}</span></div>`;
 
   let lW = "", lQ = "", lWrap = false, lastLog = "";
   try { lWrap = localStorage.getItem("ao.lw") === "1"; } catch {}
@@ -532,7 +522,7 @@
     const sw = $("logW"), sq = $("logQ"), wb = $("logWrap"), lg = $("log");
     if (!sw || !sq || !wb || !lg || sw.dataset.inited) return;
     sw.dataset.inited = "1";
-    sw.innerHTML = `<option value="">All workers</option>` + ORD.map((w) => `<option value="${w}">${esc(NM[w])}</option>`).join("");
+    sw.innerHTML = `<option value="">All workers</option>` + [...(S?.crew || []).map((w) => "c:" + w.id), "pipe", ...ORD, ...Object.keys(S?.w || {}).filter((k) => k.startsWith("x:"))].map((w) => `<option value="${w}">${esc(NM[w] || w)}</option>`).join("");
     wb.classList.toggle("on", lWrap);
     lg.classList.toggle("wrap", lWrap);
     sw.onchange = () => { lW = sw.value; rlog(); };
@@ -552,17 +542,20 @@
     if (html !== lastLog) { lastLog = html; $("log").innerHTML = html; }
   };
 
+  const RQN = { queued: "Queued", run: "Running", wait: "Waiting for you" };
+  const rrow = (r) => { const w = (S.crew || []).find((x) => x.id === r.w); return `<div class="row jr${r.st === "wait" ? " apr" : ""}"><div class="ti"><a class="a" href="#" data-run="${r.id}">${esc(r.st === "wait" && r.ask ? r.ask : r.n || r.flow)}</a><div class="w"><span class="stt rs-${esc(r.blk ? "fail" : r.st)}">${esc(r.blk ? "Needs a desk" : RQN[r.st] || r.st)}</span><span>${esc(r.blk ? r.blk : r.st === "wait" && r.ask ? r.n || r.flow : w ? (r.nt === "check" ? w.n + " checks" : w.n + " works") : "Pipeline")}</span><span>run ${r.id}</span></div></div><span class="rp">${r.st === "wait" ? `<button class="go" data-ry="${r.id}">Yes</button><button data-rn="${r.id}">No</button>` : ""}</span></div>`; };
   const lists = () => {
-    const q = S.q;
-    $("qn").textContent = q.length ? q.length + " jobs" : "";
+    const q = S.q, rx = S.rn || [];
+    $("qn").textContent = [q.length ? q.length + (q.length === 1 ? " job" : " jobs") : "", rx.length ? rx.length + (rx.length === 1 ? " run" : " runs") : ""].filter(Boolean).join(" · ");
     const aps = q.filter((j) => j.st === "approve").map((j) => j.id);
     for (const k of [...sel]) if (!aps.includes(k)) sel.delete(k);
     const bk = aps.length > 1 ? `<div class="bkb"><label class="ck"><input type="checkbox" id="bkA" ${sel.size === aps.length ? "checked" : ""}> all ${aps.length}</label><span class="sp"></span>${sel.size ? `<button class="go" id="bkS">submit ${sel.size}</button><button class="dng" id="bkD">drop ${sel.size}</button>` : `<span class="k">select pull requests to submit together</span>`}</div>` : "";
-    $("queue").innerHTML = bk + (q.length ? q.slice(0, 16).map((j) => jrow(j, true)).join("") : `<div class="empty">nothing waiting</div>`) + (S.dn.length ? `<div class="sub">recent</div>` + S.dn.slice(0, 12).map((j) => jrow(j, false)).join("") : "");
+    const rs = [...rx].sort((a, b) => (a.st === "wait" ? 0 : a.st === "run" ? 1 : 2) - (b.st === "wait" ? 0 : b.st === "run" ? 1 : 2));
+    $("queue").innerHTML = bk + rs.map(rrow).join("") + (q.length ? [...q].sort((a, b) => (b.st === "need_user") - (a.st === "need_user")).slice(0, 16).map((j) => jrow(j, true)).join("") : rs.length ? "" : `<div class="empty">Nothing waiting.</div>`) + (S.dn.length ? `<div class="sub">Recent</div>` + S.dn.slice(0, 12).map((j) => jrow(j, false)).join("") : "");
     const op = S.pr.filter((p) => p.st === "open").length, mg = S.pr.filter((p) => p.st === "merged").length;
     $("prn").textContent = `${op} open · ${mg} merged`;
-    $("prs").innerHTML = S.pr.length ? S.pr.slice(0, 16).map((p) => `<div class="row"><span class="pill ${p.st === "merged" ? "ok" : p.st === "closed" ? "bad" : "info"}">${esc(p.st)}</span><div class="ti"><a class="a" href="#" data-u="${esc(p.url)}">${esc(p.title)}</a></div><span class="rp">${esc(rn({ repo: p.repo, num: p.num }))}</span></div>`).join("") : `<div class="empty">no pull requests yet</div>`;
-    const m = Object.fromEntries(S.mg.map((x) => [x.d, x.n]));
+    $("prs").innerHTML = S.pr.length ? S.pr.slice(0, 16).map((p) => `<div class="row jr"><div class="ti"><a class="a" href="#" data-u="${esc(p.url)}">${esc(p.title)}</a><div class="w"><span class="stt pr-${esc(p.st)}">${esc(p.st[0].toUpperCase() + p.st.slice(1))}</span><span>${esc(rn({ repo: p.repo, num: p.num }))}</span></div></div></div>`).join("") : `<div class="empty">No pull requests yet.</div>`;
+    const m = Object.fromEntries(S.mg.map((x) => [x.day, x.n]));
     const days = [...Array(30)].map((_, i) => new Date(Date.now() - (29 - i) * 86400000).toISOString().slice(0, 10));
     const mx = Math.max(1, ...days.map((d) => m[d] || 0));
     $("bars").innerHTML = days.map((d) => `<i class="${m[d] ? "" : "z"}" style="height:${m[d] ? Math.max(8, (m[d] / mx) * 100) : 2}%" title="${d}: ${m[d] || 0}"></i>`).join("");
@@ -578,21 +571,10 @@
     else if (o.warn) { n.className = "chip bad"; n.textContent = "Claude usage near its limit"; }
     else { n.className = "chip ok"; n.textContent = "online"; }
     $("cHo").innerHTML = (S.hs || []).filter((h) => h.on_).map((h) => `<b style="color:${o.net[h.id] === false ? "var(--bad)" : "var(--t1)"}">${esc(h.id)}</b>`).join(" ") || "no machine";
-    const a = S.n;
-    $("cQ").innerHTML = `vet <b>${a.vet || 0}</b> · ready <b>${a.ready || 0}</b> · approve <b>${a.approve || 0}</b> · done <b>${a.done || 0}</b>`;
+    const a = S.n, rx = S.rn || [], cn = (st) => rx.filter((r) => r.st === st).length;
+    const wk = ["plan", "hunt", "repro", "fix", "design", "test", "ci", "review", "gate", "submit"].reduce((s, k) => s + (a[k] || 0), 0);
+    $("cQ").innerHTML = `running <b>${wk + cn("run")}</b> · waiting for you <b>${(a.approve || 0) + (a.need_user || 0) + cn("wait")}</b> · queued <b>${(a.vet || 0) + (a.ready || 0) + cn("queued")}</b> · done <b>${a.done || 0}</b>`;
     $("bPause").textContent = o.man ? "Resume office" : "Pause office";
-    // Front desk switched off (the default): no "Ask the office" button and
-    // no open chat; Projects stays only while there are projects to manage.
-    $("bAsk").hidden = !S.orch;
-    if (!S.orch && window.AO.chat && !$("chat").hidden) window.AO.chat(false);
-    const bp = $("bProj");
-    if (bp) {
-      const ps = S.projects || [];
-      bp.hidden = !S.orch && !ps.length;
-      const act = ps.filter((p) => !["done", "drop"].includes(p.st));
-      const attn = act.filter((p) => ["waiting_milestone", "need_user", "budget_reached"].includes(p.st)).length;
-      bp.textContent = attn ? `Projects (${act.length} · ${attn} waiting)` : act.length ? `Projects (${act.length})` : ps.length ? `Projects (${ps.length})` : "Projects";
-    }
     $("ban").hidden = !S.star;
     document.body.classList.toggle("sb", !!S.star);
   };
@@ -613,7 +595,7 @@
     }
     seen = ids;
   };
-  const apply = (s) => { if (!s || s.error) return; nt(s); S = s; last = performance.now(); err = 0; tiles(); lists(); chips(); tip(); window.AO.S = s; window.AO.onState && window.AO.onState(s); window.AO.onNeed && window.AO.onNeed(s); };
+  const apply = (s) => { if (!s || s.error) return; nt(s); S = s; last = performance.now(); err = 0; const fe = document.body.classList.contains("fed"); if (!fe) { tiles(); lists(); } chips(); tip(); window.AO.S = s; window.AO.onState && window.AO.onState(s); };
   window.AO.apply = apply;
 
   document.addEventListener("change", (e) => {
@@ -638,11 +620,15 @@
     if (d) { post({ a: "drop", id: Number(d.dataset.d) }).then(apply); return; }
     const rq = e.target.closest("[data-rq]");
     if (rq) { post({ a: "requeue", id: Number(rq.dataset.rq) }).then(apply); return; }
+    const ry = e.target.closest("[data-ry],[data-rn]");
+    if (ry && ry.closest("#queue")) { const id = ry.dataset.ry || ry.dataset.rn; fetch(`/api/v2/runs/${id}/answer`, { method: "POST", headers: { "content-type": "application/json", "x-ao": "1" }, body: JSON.stringify({ yes: !!ry.dataset.ry }) }).then(() => get("/api/state")).then(apply); return; }
+    const ru = e.target.closest("[data-run]");
+    if (ru && ru.closest("#queue")) { e.preventDefault(); window.AO.runView && window.AO.runView(Number(ru.dataset.run)); return; }
     const jb = e.target.closest("[data-j]");
     if (jb) { e.preventDefault(); window.AO.job && window.AO.job(Number(jb.dataset.j)); }
   });
-  const SUN = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="currentColor"/><g stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3 3l1 1M12 12l1 1M3 13l1-1M12 4l1-1"/></g></svg>`;
-  const MOON = `<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M10.5 1.5a6.5 6.5 0 1 0 4 11.6A7 7 0 0 1 10.5 1.5z"/></svg>`;
+  const SUN = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`;
+  const MOON = `<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>`;
   const thb = () => { if (S) lists(); $("bTh").innerHTML = lt() ? MOON : SUN; $("bTh").title = lt() ? "Switch to dark" : "Switch to light"; };
   thb();
   new MutationObserver(thb).observe(document.documentElement, { attributes: true, attributeFilter: ["data-th"] });
@@ -660,7 +646,7 @@
     return H;
   };
   window.AO.hlt = hlt;
-  $("cH").onclick = () => window.AO.health && window.AO.health();
+  $("cH").onclick = () => window.AO.go && window.AO.go("health");
   hlt();
   setInterval(() => hlt(), 300000);
   $("bPause").onclick = () => post({ a: "pause", on: !S.o.man }).then(apply);
@@ -670,25 +656,35 @@
   const bar = (v, mx) => { const p = Math.max(0, Math.min(100, (v / mx) * 100)); return `<span class="bar"><i class="${p > 85 ? "hi" : ""}" style="width:${p.toFixed(0)}%"></i></span>`; };
   const gb = (m) => (m / 1024).toFixed(m < 10240 ? 1 : 0);
   const tr = (k, v) => `<div class="tr"><span class="k">${k}</span><span>${v}</span></div>`;
-  const dtip = () => `<div class="th"><b>${NM.desk}</b><span>${window.AO.deskBusy ? "thinking" : "click to talk"}</span></div>`
-    + `<div class="td">${esc(DESC.desk)}</div><div class="td bad2">${esc(DWARN)}</div>`;
+  const dtip = () => `<div class="th"><b>${NM.desk}</b><span>${window.AO.deskBusy ? "thinking…" : "click to talk"}</span></div><div class="td">${esc(DESC.desk)}</div><div class="td bad2">${esc(DWARN)}</div>`;
   const wtip = (h) => {
     if (h.n === "desk") return dtip();
     const w = S.w[h.n] || {}, q = h.q || (w.job && S.q.find((x) => x.id === w.job));
     const st = w.hold ? "held" : S.o.man || S.o.pause ? "paused" : h.q ? "work" : w.st || "idle";
     const cs = (w.cmds || []).length ? w.cmds.slice(-4).reverse() : S.ev.filter((e) => e.w === h.n).slice(0, 3).map((e) => [e.t, e.m]);
-    return `<div class="th"><b>${NM[h.n]}</b><span>${esc(h.n === "ci" || h.n === "submit" ? "no model" : mdn(w.md))}</span></div>`
-      + `<div class="td">${esc(DESC[h.n])}</div>`
+    return `<div class="th"><b>${esc(NM[h.n])}</b><span>${esc(mdn(w.md))}</span></div>`
+      + (DESC[h.n] ? `<div class="td">${esc(DESC[h.n])}</div>` : "")
       + tr("status", esc(st) + (w.tk ? ` · ${kt(w.tk)} tok today` : ""))
       + (w.cs && (w.cs[0] || w.cs[1]) ? tr("cost", [w.cs[0] ? AO.usd(w.cs[0]) + " API" : "", w.cs[1] ? AO.usd(w.cs[1]) + " login value" : ""].filter(Boolean).join(" · ") + " today") : "")
       + (q ? tr("job", `${esc(rn(q))} · ${esc(q.title)} <span class="k">${esc(q.st)}</span>`) : "")
       + (w.say && !h.q ? tr("says", esc(w.say) + ` <span class="k">${ago(w.t)}</span>`) : "")
       + (cs.length ? `<div class="tc">${cs.map(([t, c]) => `<div><span class="k">${ago(t)}</span><span>${esc(c)}</span></div>`).join("")}</div>` : "")
-      + (h.tile ? `<div class="tf">click to ${w.hold ? "resume" : "pause"} this worker</div>` : q ? `<div class="tf">click to open the job</div>` : "");
+      + (q ? `<div class="tf">click to open the job</div>` : "");
+  };
+  const ptip = (h) => {
+    const w = (S.crew || []).find((x) => x.id === h.p) || {}, rs = (S.rn || []).filter((r) => r.w === h.p), k = "c:" + h.p;
+    const sit = seats().ids.has(h.p);
+    const cs = S.ev.filter((e) => e.w === k).slice(0, 3);
+    return `<div class="th"><b>${esc(w.n || h.p)}</b><span>${esc(w.r || "")}</span></div>`
+      + tr("model", esc(mdn(w.md || "")))
+      + tr("status", !sit ? `<span class="bad2">needs a desk with a chair</span>` : rs.some((r) => r.st === "run" && !r.blk) ? "working" : S.o.man ? "paused" : "idle")
+      + rs.map((r) => tr("run", `${esc(r.n || r.flow)} <span class="k">run ${r.id}</span>`)).join("")
+      + (cs.length ? `<div class="tc">${cs.map((e) => `<div><span class="k">${ago(e.t)}</span><span>${esc(e.m)}</span></div>`).join("")}</div>` : "")
+      + `<div class="tf">${!sit ? "place a desk and a chair in Edit office" : rs.length ? "click to open the run" : "click to open Team"}</div>`;
   };
   const htip = (h) => {
     const x = (S.hs || []).find((y) => y.id === h.h) || {}, m = S.hst?.[h.h], down = S.o.net?.[h.h] === false;
-    const js = S.q.filter((q) => q.h === h.h && ["repro", "fix", "ci", "design", "test", "review", "gate", "submit"].includes(q.st));
+    const js = S.q.filter((q) => q.h === h.h && ["repro", "fix", "ci", "review", "gate", "submit"].includes(q.st));
     let r = `<div class="th"><b>${esc(h.h === "local" ? "this computer" : h.h)}</b><span>${x.dk ? "Docker" : "no Docker"}</span></div>`
       + tr("status", down ? `<span class="bad2">offline</span>` : `<span class="ok2">online</span> · ${js.length}/${x.ln || 0} lanes busy`);
     if (m) {
@@ -702,9 +698,9 @@
     return r + `<div class="tf">click to edit machines</div>`;
   };
   const tip = () => {
-    const el = $("tip"), h = hovT ? { n: hovT, tile: true } : hov && hits.find((x) => x.k === hov);
+    const el = $("tip"), h = hov && hits.find((x) => x.k === hov);
     if (!h || !S) { el.hidden = true; return; }
-    el.innerHTML = h.h ? htip(h) : wtip(h);
+    el.innerHTML = h.h ? htip(h) : h.p ? ptip(h) : wtip(h);
     el.hidden = false;
     const r = el.getBoundingClientRect(), W = window.innerWidth, H = window.innerHeight;
     el.style.left = Math.min(mx + 16, W - r.width - 8) + "px";
@@ -715,14 +711,15 @@
     mx = e.clientX; my = e.clientY;
     const h = at(e);
     hov = h ? h.k : null;
-    cv.style.cursor = h && (h.h || h.q || h.n === "desk" || (S?.w?.[h.n]?.job)) ? "pointer" : "";
+    cv.style.cursor = h && (h.h || h.p || h.q || h.n === "desk" || (S?.w?.[h.n]?.job)) ? "pointer" : "";
     tip();
   });
   cv.addEventListener("mouseleave", () => { hov = null; cv.style.cursor = ""; tip(); });
   cv.addEventListener("click", (e) => {
     const h = at(e);
     if (!h) return;
-    if (h.h) return window.AO.hosts && window.AO.hosts();
+    if (h.h) return window.AO.go && window.AO.go("machines");
+    if (h.p) { const r = (S.rn || []).find((x) => x.w === h.p); if (!seats().wait.includes(h.p) && r) return window.AO.runView && window.AO.runView(r.id); if (seats().wait.includes(h.p)) return $("bCz").click(); return window.AO.go && window.AO.go("team"); }
     if (h.n === "desk") return window.AO.chat && window.AO.chat(true);
     const id = h.q?.id || S?.w?.[h.n]?.job;
     if (id && S.q.some((q) => q.id === id)) window.AO.job && window.AO.job(id);
@@ -742,6 +739,7 @@
     }
     setTimeout(poll, 1000);
   };
+  get("/api/cfg").then((c) => (window.AO.pord = (c?.set?.pipe?.steps || []).map((x) => x.id), window.AO.surf.load(c?.set?.office), window.AO.furn.loadRoom(c?.set?.office?.size), window.AO.furn.load(c?.set?.office?.items))).catch(() => {});
   poll();
   live();
   requestAnimationFrame(frame);
