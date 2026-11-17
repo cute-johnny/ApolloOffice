@@ -2262,7 +2262,10 @@ pub fn recover(a: &Ax) {
         if st == "submit" && d["ap"].as_bool().unwrap_or(false) {
             continue;
         }
-        if matches!(kd, "fix" | "epic_pr") && ["ci", "review", "gate", "submit"].contains(&st) && d["h"].is_string() && d["br"].is_string() {
+        // An epic PR is not resumed (`rs`): that path skips the owner's
+        // approval and rewrites its description as if it were a bug fix.
+        // It starts again from prepare_epic_pr and asks for approval again.
+        if kd == "fix" && ["ci", "review", "gate", "submit"].contains(&st) && d["h"].is_string() && d["br"].is_string() {
             d["rs"] = json!(true);
         } else if matches!(kd, "fix" | "hunt" | "build" | "design_fix" | "test_app" | "architect") && d["h"].is_string() {
             d["rp"] = json!(true);
