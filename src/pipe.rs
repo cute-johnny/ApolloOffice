@@ -1079,79 +1079,91 @@ async fn fix(a: &Ax, j: &mut Job, fb0: String, k0: u64) -> R<Value> {
         crate::quality::prepare(a, j).await?;
     }
     let mut fb = fb0;
+    // Set by go() when the job was paused in its design or test stage.
+    let mut resume_at = j.d.as_object_mut().and_then(|o| o.remove("resume_at")).and_then(|v| v.as_str().map(String::from)).filter(|s| is_build && matches!(s.as_str(), "design" | "test") && j.d["f0"].is_object());
     let plan = crate::routing::plan(a);
     let rounds = if crate::routing::enabled(a) { plan.len() as u64 } else { RND + 1 };
     for k in k0..rounds {
-        kill(a, j)?;
-        a.db.jset(j.id, &[("st", json!("fix"))]);
-        a.st("fixer", "work", Some(j.id), "");
-        a.say("fixer", &format!("{}{} {}", if k > 0 { format!("round {}: ", k + 1) } else { String::new() }, if is_build { "building" } else { "fixing" }, j.tag()), Some(j.id));
-        let c = cx(a, j);
-        let md = if crate::routing::enabled(a) { plan[k as usize].clone() } else if c { a.md("big") } else { a.md("fixer") };
-        crate::routing::event(a, Some(j.id), "fixer", k as usize, &md, &fb);
-        use_(a, j, &md);
-        j.d["author"] = json!(md);
-        let sys_p = if is_build { P("builder") } else { P("fixer") };
-        let mut o = Ask::new("fixer", md, sys_p, fixp(a, j, &fb));
-        o.job = Some(j.id);
-        o.rn = rn(a, j);
-        o.turns = if c { 200 } else { 120 };
-        o.t = if c { 180 * 60 } else { 120 * 60 };
-        let (_, js) = match ask(a, o).await {
-            Ok(v) => v,
-            Err(X::Back(e)) => return Err(X::Back(e)),
-            Err(X::Drop(e)) => return Err(X::Drop(e)),
-            Err(X::NeedUser(q)) => return Err(X::NeedUser(q)),
-            Err(e) if crate::routing::enabled(a) => { fb = format!("Model attempt failed: {e}. Inspect the existing tree and preserve useful work."); continue; }
-            Err(e) => return Err(e),
-        };
-        a.st("fixer", "idle", None, "");
-        if js.is_null() {
-            fb = "Your answer contained no JSON.".into();
-            continue;
-        }
-        if let Some(g) = js["give_up"].as_str() {
-            a.st("fixer", "idle", None, "sad");
-            if crate::routing::enabled(a) { fb = format!("Previous model gave up: {g}. Inspect the tree and repair the actual issue."); continue; }
-            return drop(format!("{} gave up: {g}", if is_build { "Builder" } else { "Fixer" }));
-        }
-        a.say("fixer", &format!("done: {}", js["title"].as_str().unwrap_or("")), Some(j.id));
-        j.d["f0"] = js.clone();
-        j.d["k"] = json!(k);
-        a.db.jd(j);
-        a.flow("fixer", "ci", "proof");
-        fb = if j.kind == "review" {
-            vrev(a, j, &js).await?
-        } else if is_build {
-            verify_build(a, j, &js).await?
+        // A build paused for the owner's answer in its design or test stage
+        // goes on from there: the milestone was already built, verified and
+        // passed CI, so the Builder does not implement it again.
+        let at = if k == k0 { resume_at.take() } else { None };
+        let js = if at.is_some() {
+            a.say("fixer", &format!("resuming the {} stage of {}", at.as_deref().unwrap_or(""), j.tag()), Some(j.id));
+            j.d["f0"].clone()
         } else {
-            verify(a, j, &js).await?
+            kill(a, j)?;
+            a.db.jset(j.id, &[("st", json!("fix"))]);
+            a.st("fixer", "work", Some(j.id), "");
+            a.say("fixer", &format!("{}{} {}", if k > 0 { format!("round {}: ", k + 1) } else { String::new() }, if is_build { "building" } else { "fixing" }, j.tag()), Some(j.id));
+            let c = cx(a, j);
+            let md = if crate::routing::enabled(a) { plan[k as usize].clone() } else if c { a.md("big") } else { a.md("fixer") };
+            crate::routing::event(a, Some(j.id), "fixer", k as usize, &md, &fb);
+            use_(a, j, &md);
+            j.d["author"] = json!(md);
+            let sys_p = if is_build { P("builder") } else { P("fixer") };
+            let mut o = Ask::new("fixer", md, sys_p, fixp(a, j, &fb));
+            o.job = Some(j.id);
+            o.rn = rn(a, j);
+            o.turns = if c { 200 } else { 120 };
+            o.t = if c { 180 * 60 } else { 120 * 60 };
+            let (_, js) = match ask(a, o).await {
+                Ok(v) => v,
+                Err(X::Back(e)) => return Err(X::Back(e)),
+                Err(X::Drop(e)) => return Err(X::Drop(e)),
+                Err(X::NeedUser(q)) => return Err(X::NeedUser(q)),
+                Err(e) if crate::routing::enabled(a) => { fb = format!("Model attempt failed: {e}. Inspect the existing tree and preserve useful work."); continue; }
+                Err(e) => return Err(e),
+            };
+            a.st("fixer", "idle", None, "");
+            if js.is_null() {
+                fb = "Your answer contained no JSON.".into();
+                continue;
+            }
+            if let Some(g) = js["give_up"].as_str() {
+                a.st("fixer", "idle", None, "sad");
+                if crate::routing::enabled(a) { fb = format!("Previous model gave up: {g}. Inspect the tree and repair the actual issue."); continue; }
+                return drop(format!("{} gave up: {g}", if is_build { "Builder" } else { "Fixer" }));
+            }
+            a.say("fixer", &format!("done: {}", js["title"].as_str().unwrap_or("")), Some(j.id));
+            j.d["f0"] = js.clone();
+            j.d["k"] = json!(k);
+            a.db.jd(j);
+            a.flow("fixer", "ci", "proof");
+            fb = if j.kind == "review" {
+                vrev(a, j, &js).await?
+            } else if is_build {
+                verify_build(a, j, &js).await?
+            } else {
+                verify(a, j, &js).await?
+            };
+            if !fb.is_empty() {
+                a.say("fixer", &format!("proof missing: {}", fb.lines().next().unwrap_or("")), Some(j.id));
+                if crate::routing::enabled(a) {
+                    j.d["verification_feedback"] = json!(fb.clone());
+                    let diagnosis = diagnosis(a, j, &mut js.clone()).await?;
+                    fb.push_str(&format!("\n{diagnosis}"));
+                }
+                continue;
+            }
+            fb = ci(a, j).await?;
+            if fb.starts_with("CI aborted after") {
+                a.st("fixer", "idle", None, "sad");
+                return drop(format!("{fb} on {}", j.h()));
+            }
+            if !fb.is_empty() {
+                if crate::routing::enabled(a) {
+                    j.d["verification_feedback"] = json!(fb.clone());
+                    let diagnosis = diagnosis(a, j, &mut js.clone()).await?;
+                    fb.push_str(&format!("\n{diagnosis}"));
+                }
+                continue;
+            }
+            js
         };
-        if !fb.is_empty() {
-            a.say("fixer", &format!("proof missing: {}", fb.lines().next().unwrap_or("")), Some(j.id));
-            if crate::routing::enabled(a) {
-                j.d["verification_feedback"] = json!(fb.clone());
-                let diagnosis = diagnosis(a, j, &mut js.clone()).await?;
-                fb.push_str(&format!("\n{diagnosis}"));
-            }
-            continue;
-        }
-        fb = ci(a, j).await?;
-        if fb.starts_with("CI aborted after") {
-            a.st("fixer", "idle", None, "sad");
-            return drop(format!("{fb} on {}", j.h()));
-        }
-        if !fb.is_empty() {
-            if crate::routing::enabled(a) {
-                j.d["verification_feedback"] = json!(fb.clone());
-                let diagnosis = diagnosis(a, j, &mut js.clone()).await?;
-                fb.push_str(&format!("\n{diagnosis}"));
-            }
-            continue;
-        }
         if is_build {
             let need_visual = j.d["visual"].as_bool().unwrap_or(false) || has_ui_surface(a, j).await;
-            if need_visual {
+            if need_visual && at.as_deref() != Some("test") {
                 let dfb = design_fix_stage(a, j, false).await?;
                 if !dfb.is_empty() {
                     fb = dfb;
@@ -2173,7 +2185,10 @@ async fn go(a: &Ax, id: i64, h: &str) {
             } else {
                 String::new()
             };
-            let resume_k0 = if paused_stage == "fix" { j.d["k"].as_u64().unwrap_or(0) } else { 0 };
+            let resume_k0 = if matches!(paused_stage.as_str(), "fix" | "design" | "test") { j.d["k"].as_u64().unwrap_or(0) } else { 0 };
+            if j.kind == "build" && matches!(paused_stage.as_str(), "design" | "test") {
+                j.d["resume_at"] = json!(paused_stage);
+            }
             stage(a, "fixer", || race(a, &j, "before fix")).await?;
             let mut jj = j.clone();
             if j.kind == "rebase" {
@@ -3161,6 +3176,56 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'output_tok
         // Without secrets everything is committed, as before.
         std::fs::write(repo.join("app.js"), "v3\n").unwrap();
         assert_eq!(commit_all_cmd(&[], "m"), "git add -A && git commit -qm 'm'");
+        let _ = std::fs::remove_dir_all(dd);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_build_paused_in_its_test_stage_resumes_there_without_building_again() {
+        let _cli_lock = crate::ai::CLI_TEST_LOCK.lock().await;
+        use std::os::unix::fs::PermissionsExt;
+        let dd = std::env::temp_dir().join(format!("apollo-resume-{}", hex::encode(rand::random::<[u8; 8]>())));
+        let repo = dd.join("work/o__app");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git").args(args).current_dir(&repo).output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        };
+        git(&["init", "-q", "-b", "epic/app"]);
+        std::fs::write(repo.join("app.py"), "print('ok')\n").unwrap();
+        git(&["add", "app.py"]);
+        git(&["-c", "user.name=fixture", "-c", "user.email=fixture@localhost", "commit", "-qm", "milestone 1"]);
+        // A fake model: it records which worker was asked and answers.
+        let log = dd.join("asked");
+        let cli = dd.join("fake-cli");
+        std::fs::write(&cli, format!(r##"#!/usr/bin/python3
+import sys,json,pathlib
+args=sys.argv[1:];text=sys.stdin.read()
+who='tester' if 'You are Tester' in text else 'builder' if 'Builder' in text and 'read-only' not in args else 'reviewer' if 'read-only' in args else 'other'
+open({log:?},'a').write(who+'\n')
+answer=json.dumps({{'ok':True,'issues':[],'flows_tested':['home'],'bugs_found':[],'summary':'all flows pass','title':'Milestone 1'}})
+pathlib.Path(args[args.index('-o')+1]).write_text(answer)
+print(json.dumps({{'type':'item.completed','item':{{'type':'agent_message','text':answer}}}}))
+print(json.dumps({{'type':'turn.completed','usage':{{'input_tokens':10,'output_tokens':10}}}}))
+"##, log = log.display().to_string())).unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::env::set_var("APOLLO_OFFICE_CODEX", &cli);
+        let db = crate::db::Db::mem();
+        db.ks("set", &json!({"free_first": true}));
+        db.run("insert into hs(id,ssh,dk,raw,on_) values('local','',0,1,1)", pa![]);
+        db.run("insert into rp(full) values('o/app')", pa![]);
+        let pid = db.pnew("o/app", "App", "spec", "epic/app", false, 0.0);
+        let f0 = json!({"title": "Milestone 1", "summary": "built"});
+        let id = db.jnew_proj("o/app", 0, "build", "M1", "", "fix", "", json!({"h": "local", "br": "epic/app", "base": "HEAD", "f0": f0, "k": 0, "resume_at": "test"}), None, 0.0, Some(pid), 1, &[], "epic/app");
+        let a = std::sync::Arc::new(crate::app::App::new(db, dd.clone(), 1, "apollo-office".into()));
+        let mut j = a.db.jg(id).unwrap();
+        let r = fix(&a, &mut j, String::new(), 0).await;
+        std::env::remove_var("APOLLO_OFFICE_CODEX");
+        let asked = std::fs::read_to_string(&log).unwrap_or_default();
+        assert!(r.is_ok(), "{:?} asked: {asked}", r.err().map(|e| e.to_string()));
+        assert_eq!(asked.lines().next(), Some("tester"), "the Tester runs first: {asked}");
+        assert!(!asked.contains("builder"), "the Builder must not build the milestone again: {asked}");
+        assert!(j.d.get("resume_at").is_none());
         let _ = std::fs::remove_dir_all(dd);
     }
 
