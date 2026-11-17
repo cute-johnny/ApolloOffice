@@ -37,7 +37,11 @@
   const short = (r) => r.split("/")[1] || r;
 
   // One line per job, e.g. "→ Repro · job 12 · repo · title".
-  const jrow = (j) => `<button class="cj" data-j="${j.id}" title="Open the job"><b>${j.new ? "→ " + esc(who(j)) : "Already in the office"}</b> · job ${j.id} · ${esc(short(j.repo))} · ${esc(j.title)}</button>`;
+  // A project that already exists comes back with the project's id, not a
+  // job id, so it opens the Projects drawer instead of a (wrong) job.
+  const jrow = (j) => j.kind === "project" && !j.new
+    ? `<button class="cj" data-pj="${j.id}" title="Open Projects"><b>Already in the office</b> · project ${j.id} · ${esc(short(j.repo))} · ${esc(j.title)}</button>`
+    : `<button class="cj" data-j="${j.id}" title="Open the job"><b>${j.new ? "→ " + esc(who(j)) : "Already in the office"}</b> · job ${j.id} · ${esc(short(j.repo))} · ${esc(j.title)}</button>`;
 
   // What starting the kept steps sets in motion, shown next to the Start button.
   const impact = (on) => {
@@ -173,6 +177,7 @@
   log.onclick = (e) => {
     const j = e.target.closest("[data-j]"), x = e.target.closest(".cx button"), ch = e.target.closest(".cchip"), g = e.target.closest("[data-go]"), n = e.target.closest("[data-no]");
     if (j) { e.preventDefault(); A.job && A.job(Number(j.dataset.j)); }
+    if (e.target.closest("[data-pj]")) { e.preventDefault(); A.projects && A.projects(false); }
     if (x) { inp.value = x.textContent; inp.focus(); }
     if (ch) { goText(ch.textContent); }
     if (g) start(Number(g.dataset.go));
