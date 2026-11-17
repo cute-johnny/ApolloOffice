@@ -183,10 +183,12 @@ pub fn check_with(a: &Ax, act: &Value, login: &str) -> Result<Value, String> {
             };
             // Any open job counts, also issues Scout found: the owner may
             // describe a bug that is already reported.
-            let open = a.db.all("select id, st, title from jobs where repo=? and kind in ('fix','design_fix','test_app') and st not in ('done','drop','park') order by id desc", pa![r.clone()]);
+            let open = a.db.all("select id, st, title, kind from jobs where repo=? and kind in ('fix','design_fix','test_app') and st not in ('done','drop','park') order by id desc", pa![r.clone()]);
             let t = |x: &Value| x["title"].as_str().unwrap_or("").to_lowercase();
-            let have = open.iter().find(|x| t(x) == title.to_lowercase() && (db_kind == "fix" || x["kind"].as_str().unwrap_or("") != "hunt")).cloned().map(job);
-            let like = if have.is_some() || kind == "test_app" { None } else { open.iter().find(|x| alike(&t(x), &title)).cloned().map(job) };
+            // Only the same kind of work counts as "already in the office": a
+            // design fix titled like an open bug fix is a different job.
+            let have = open.iter().find(|x| t(x) == title.to_lowercase() && x["kind"].as_str().unwrap_or("") == db_kind).cloned().map(job);
+            let like = if have.is_some() || kind == "test_app" { None } else { open.iter().find(|x| x["kind"].as_str().unwrap_or("") == db_kind && alike(&t(x), &title)).cloned().map(job) };
             let clean = json!({"type": kind, "repo": r, "title": title, "body": body, "where": line(act["where"].as_str().unwrap_or(""), 300), "cx": act["cx"].as_str().unwrap_or(""), "hint": line(act["hint"].as_str().unwrap_or(""), 500)});
             step(to, &title, have, like, clean)
         }
@@ -516,6 +518,16 @@ mod tests {
         // A different bug in the same command is not held back.
         assert!(check(&a, &bug("List command ignores the --all flag")).unwrap()["like"].is_null());
         assert_eq!(jobs(&a), 2);
+    }
+
+    #[test]
+    fn a_design_fix_titled_like_an_open_bug_fix_is_not_the_same_job() {
+        let a = office();
+        let first = route(&a, &json!({"type": "bug", "repo": "o/r", "title": "Login page", "body": "crashes"})).unwrap();
+        let df = route(&a, &json!({"type": "design_fix", "repo": "o/r", "title": "Login page", "body": "spacing is off"})).unwrap();
+        assert_ne!(df["id"], first["id"]);
+        assert_eq!((df["new"].as_bool(), df["to"].as_str()), (Some(true), Some("design_fixer")));
+        assert_eq!(route(&a, &json!({"type": "design_fix", "repo": "o/r", "title": "Login page", "body": "again"})).unwrap()["new"], false);
     }
 
     #[test]
