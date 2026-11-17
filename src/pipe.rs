@@ -2330,16 +2330,33 @@ async fn pick(a: &Ax, h: &str) -> Option<i64> {
         if !deps.is_empty() && j["st"] != "submit" {
             let mut blocked = false;
             let mut dropped_dep = None;
+            let mut missing_dep = None;
             for dep_id in deps {
                 let dst = a.db.one("select st from jobs where id=?", pa![dep_id]).and_then(|x| x["st"].as_str().map(String::from));
                 match dst.as_deref() {
                     Some("done") => {}
-                    Some("drop") | None => { dropped_dep = Some(dep_id); break; }
+                    Some("drop") => { dropped_dep = Some(dep_id); }
+                    None => { missing_dep = Some(dep_id); break; }
                     _ => { blocked = true; }
                 }
             }
+            if let Some(did) = missing_dep {
+                a.db.jset(id, &[("st", json!("drop")), ("why", json!(format!("prerequisite milestone job #{did} no longer exists")))]);
+                continue;
+            }
             if let Some(did) = dropped_dep {
-                a.db.jset(id, &[("st", json!("drop")), ("why", json!(format!("prerequisite milestone job #{did} dropped")))]);
+                // In a live project the milestone waits instead of being
+                // dropped too, so requeueing the failed prerequisite resumes
+                // the chain. Dropping the project still drops it.
+                let live = j["project_id"].as_i64().and_then(|p| a.db.pg(p)).is_some_and(|p| p.st != "drop");
+                if live {
+                    let why = format!("waits for milestone job #{did}, which was dropped: requeue it, or drop the project");
+                    if j["why"].as_str() != Some(why.as_str()) {
+                        a.db.jset(id, &[("why", json!(why))]);
+                    }
+                } else {
+                    a.db.jset(id, &[("st", json!("drop")), ("why", json!(format!("prerequisite milestone job #{did} dropped")))]);
+                }
                 continue;
             }
             if blocked {
@@ -2884,5 +2901,27 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'output_tok
         a.db.ks("set", &json!({"orch": true}));
         assert_eq!(pick(&a, "local").await, Some(m1));
         assert_eq!(a.db.jg(m1).unwrap().why, "picked up again");
+    }
+
+    #[tokio::test]
+    async fn a_milestone_waits_for_a_dropped_prerequisite_until_it_is_requeued() {
+        let (a, pid) = project_office();
+        a.db.ks("set", &json!({"orch": true}));
+        let m1 = a.db.jnew_proj("o/app", 0, "build", "M1", "", "drop", "boom", json!({}), None, 0.0, Some(pid), 1, &[], "epic/app");
+        let m2 = a.db.jnew_proj("o/app", 0, "build", "M2", "", "ready", "", json!({}), None, 0.0, Some(pid), 2, &[m1], "epic/app");
+        // M1 failed: M2 waits for it instead of being dropped as well.
+        assert_eq!(pick(&a, "local").await, None);
+        let j2 = a.db.jg(m2).unwrap();
+        assert_eq!(j2.st, "ready");
+        assert!(j2.why.contains("requeue"), "{}", j2.why);
+        // Once M1 is requeued and lands, M2 runs.
+        a.db.jset(m1, &[("st", json!("done"))]);
+        assert_eq!(pick(&a, "local").await, Some(m2));
+        // In a dropped project the waiting milestone is dropped.
+        free(&a);
+        a.db.jset(m1, &[("st", json!("drop"))]);
+        a.db.pset(pid, &[("st", json!("drop"))]);
+        assert_eq!(pick(&a, "local").await, None);
+        assert_eq!(a.db.jg(m2).unwrap().st, "drop");
     }
 }
