@@ -394,12 +394,20 @@ pub async fn run(a: &Ax, j: &mut Job) -> R<()> {
 
     push_branch(a, j, &epic_br, &j.s("base"), &j.repo, "--force").await?;
 
+    // Planning can take an hour: the owner may have paused or dropped the
+    // project meanwhile. A drop queues no milestones; a pause is kept.
+    let now_st = a.db.pg(pid).map(|p| p.st).unwrap_or_default();
+    if now_st == "drop" {
+        a.st("architect", "idle", None, "");
+        return drop(format!("project #{pid} was dropped by the owner while the Architect planned it"));
+    }
+    let next_st = if now_st == "paused" { "paused" } else { "running" };
     a.db.pset(
         pid,
         &[
             ("epic_branch", json!(epic_br)),
             ("arch_json", raw_plan_json.clone()),
-            ("st", json!("running")),
+            ("st", json!(next_st)),
         ],
     );
 

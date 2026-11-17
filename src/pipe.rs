@@ -1871,7 +1871,9 @@ async fn land_milestone(a: &Ax, j: &mut Job) -> R<()> {
         let ms = a.db.p_milestones(pid);
         let remaining_builds = ms.iter().any(|m| m.kind == "build" && !matches!(m.st.as_str(), "done" | "drop"));
         let any_failed = ms.iter().any(|m| m.kind == "build" && m.st == "drop");
-        if let Some(proj) = a.db.pg(pid) {
+        if let Some(proj) = a.db.pg(pid).filter(|p| p.st != "drop") {
+            // A project the owner dropped while this milestone landed gets no
+            // epic PR, and is not switched back to running.
             if !remaining_builds && !any_failed {
                 let has_epic = ms.iter().any(|m| m.kind == "epic_pr" && m.st != "drop");
                 if !has_epic {
@@ -1917,7 +1919,7 @@ async fn land_milestone(a: &Ax, j: &mut Job) -> R<()> {
                     a.db.jnew_proj(&j.repo, 0, "epic_pr", &format!("PR: {}", proj.title), &j.url, "ready", &format!("open PR for {epic_br}"), ed, None, -1.5, Some(pid), max_idx, &dep_ids, &epic_br);
                     a.sw.notify_one();
                 }
-                if proj.st != "done" {
+                if !matches!(proj.st.as_str(), "done" | "paused") {
                     a.db.pset(pid, &[("st", json!("running"))]);
                 }
             } else if remaining_builds && proj.pause_each && proj.st == "running" {
@@ -2202,7 +2204,11 @@ async fn go(a: &Ax, id: i64, h: &str) {
             let q_text = qu["question"].as_str().unwrap_or("Input required").to_string();
             a.db.jset(id, &[("st", json!("need_user")), ("why", json!(crate::sh::head(&q_text, 240))), ("d", jj.d.clone()), ("question_json", json!(qu.to_string()))]);
             if let Some(pid) = jj.project_id {
-                a.db.pset(pid, &[("st", json!("need_user"))]);
+                // Only a working project waits for the answer; a pause or
+                // drop the owner chose meanwhile is kept.
+                if a.db.pg(pid).is_some_and(|p| matches!(p.st.as_str(), "running" | "planning")) {
+                    a.db.pset(pid, &[("st", json!("need_user"))]);
+                }
             }
             idle_all(a, id);
             a.note("User input needed", &format!("{}: {}", jj.tag(), crate::sh::head(&q_text, 160)), 3);

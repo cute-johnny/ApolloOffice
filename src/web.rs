@@ -910,7 +910,9 @@ pub(crate) fn answer_job_inner(a: &Ax, b: &Value) -> Result<Value, (StatusCode, 
     }
     a.db.jset(id, &[("st", json!("ready")), ("why", json!("answered by user, resuming")), ("d", j.d.clone()), ("question_json", Value::Null)]);
     if let Some(pid) = j.project_id {
-        if a.db.pg(pid).map(|p| p.st == "need_user").unwrap_or(false) {
+        // Another milestone of the project may still wait for an answer.
+        let others = a.db.n("select count(*) from jobs where project_id=? and st='need_user' and id<>?", pa![pid, id]);
+        if others == 0 && a.db.pg(pid).map(|p| p.st == "need_user").unwrap_or(false) {
             a.db.pset(pid, &[("st", json!("running"))]);
         }
     }
