@@ -26,6 +26,13 @@ fn dir(a: &Ax, j: &Job) -> String {
 
 const ORCH_OFF_WHY: &str = "waits: the front desk orchestrator is off (Settings → General → Front desk)";
 
+/// Stops the app servers a Design Fixer or Tester started for this job:
+/// processes listening on 127.0.0.1 whose working directory is the job's
+/// folder. A bare `pkill -f 127.0.0.1:` also killed the owner's own servers
+/// and tunnels on a machine without Docker. Without /proc (macOS) it kills
+/// nothing. Run through `x()`, which starts in the job's folder.
+const KILL_JOB_SRV: &str = "w=$(pwd -P); for p in $(pgrep -f '127\\.0\\.0\\.1:' 2>/dev/null); do case \"$(readlink /proc/$p/cwd 2>/dev/null)\" in \"$w\"|\"$w\"/*) kill $p 2>/dev/null;; esac; done; true";
+
 pub fn rp(a: &Ax, r: &str) -> Value {
     a.db.one("select * from rp where full=?", pa![r.to_string()]).unwrap_or(json!({}))
 }
@@ -1685,6 +1692,7 @@ pub(crate) async fn design_fix_stage(a: &Ax, j: &mut Job, standalone: bool) -> R
     o.ef = Some("medium");
     o.t = 90 * 60;
     let res = ask(a, o).await;
+    let _ = x(a, j, KILL_JOB_SRV, 30).await;
     let (_, js) = match res {
         Ok(v) => v,
         Err(X::NeedUser(q)) => {
@@ -1696,7 +1704,6 @@ pub(crate) async fn design_fix_stage(a: &Ax, j: &mut Job, standalone: bool) -> R
             return Err(e);
         }
     };
-    let _ = x(a, j, "pkill -f \"127\\.0\\.0\\.1:\" 2>/dev/null; true", 30).await;
     sync_artifacts(a, j).await;
         let dt = ok(a, j, "git status --porcelain", 60).await.unwrap_or_default();
     if !dt.trim().is_empty() {
@@ -1750,7 +1757,7 @@ pub(crate) async fn tester_stage(a: &Ax, j: &mut Job, standalone: bool) -> R<Val
     o.ef = Some("medium");
     o.t = 90 * 60;
     let res = ask(a, o).await;
-    let _ = x(a, j, "pkill -f \"127\\.0\\.0\\.1:\" 2>/dev/null; true", 30).await;
+    let _ = x(a, j, KILL_JOB_SRV, 30).await;
     let (_, js) = match res {
         Ok(v) => v,
         Err(X::NeedUser(q)) => {
