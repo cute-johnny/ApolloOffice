@@ -367,9 +367,9 @@
       <div class="sbar" id="sbar" hidden><span id="sm">Unsaved changes</span><span class="sp"></span><button type="button" id="sx">Discard</button><button class="pri">Save</button></div></form>
       <div data-tab="sys" class="sec dz"><h4>Danger zone</h4><div class="box">
         <div class="dzr"><div><b>Sign out everywhere</b><div class="hint">Ends every session, including this one. You need a new link from <code>apollo-office login-link</code>.</div></div><button type="button" class="dng" data-dz="logout">Sign out everywhere</button></div>
-        <div class="dzr"><div><b>Clear job history</b><div class="hint">Deletes finished and dropped jobs and their log. Pull requests and costs stay.</div></div><button type="button" class="dng" data-dz="history">Clear history</button></div>
+        <div class="dzr"><div><b>Clear job history</b><div class="hint">Deletes finished and dropped jobs and their log. Pull requests, costs and the milestones of unfinished projects stay.</div></div><button type="button" class="dng" data-dz="history">Clear history</button></div>
         <div class="dzr"><div><b>Reset settings</b><div class="hint">Models, limits, budgets, notifications and paused workers go back to defaults. Keys, repositories and machines stay.</div></div><button type="button" class="dng" data-dz="reset">Reset settings</button></div>
-        <div class="dzr"><div><b>Delete all data</b><div class="hint">Deletes repositories, machines, jobs, pull request history, costs, settings and stored API keys. Nothing on GitHub changes. Type <code>delete</code> to confirm.</div><input type="text" id="dzw" placeholder="delete" autocomplete="off" style="margin-top:6px;max-width:160px"></div><button type="button" class="dng" data-dz="wipe">Delete everything</button></div>
+        <div class="dzr"><div><b>Delete all data</b><div class="hint">Deletes repositories, machines, jobs, projects, pull request history, costs, settings and stored API keys. Nothing on GitHub changes. Type <code>delete</code> to confirm.</div><input type="text" id="dzw" placeholder="delete" autocomplete="off" style="margin-top:6px;max-width:160px"></div><button type="button" class="dng" data-dz="wipe">Delete everything</button></div>
         <div class="msg" id="dzm"></div></div></div>`;
     const stab = (k) => {
       tb = k;

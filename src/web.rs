@@ -1196,7 +1196,9 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
                     a.say("scout", "signed out everywhere", None);
                 }
                 "history" => {
-                    a.db.run("delete from jobs where st in ('done','drop')", pa![]);
+                    // Milestones of unfinished projects stay: later milestones
+                    // depend on them and the epic PR lists their work.
+                    a.db.run("delete from jobs where st in ('done','drop') and (project_id is null or project_id not in (select id from projects where st not in ('done','drop')))", pa![]);
                     a.db.run("delete from ev where j is null or j not in (select id from jobs)", pa![]);
                     a.say("scout", "job history cleared", None);
                 }
@@ -1219,7 +1221,7 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
                         return er(StatusCode::BAD_REQUEST, "type delete to confirm");
                     }
                     a.lv.lock().unwrap().o.man = true;
-                    for t in ["jobs", "ev", "prs", "cost", "tok", "seen", "cm", "rp", "hs", "lnk"] {
+                    for t in ["jobs", "projects", "ev", "prs", "cost", "tok", "seen", "cm", "rp", "hs", "lnk"] {
                         a.db.run(&format!("delete from {t}"), pa![]);
                     }
                     a.db.run("delete from kv", pa![]);
@@ -1529,6 +1531,22 @@ mod t {
         assert_eq!(a.db.pg(pid).unwrap().st, "running");
         assert!(!st.to_string().contains("sk_live_secret_value_123"));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn clearing_history_keeps_milestones_of_unfinished_projects() {
+        let db = crate::db::Db::mem();
+        let pid = db.pnew("u/app", "App", "spec", "epic/app", true, 12.0);
+        db.pset(pid, &[("st", json!("waiting_milestone"))]);
+        let m1 = db.jnew_proj("u/app", 0, "build", "M1", "", "done", "", json!({}), None, 0.0, Some(pid), 1, &[], "epic/app");
+        let old = db.jnew("u/app", 1, "fix", "old bug", "", "done", "", json!({}), None, 0.0);
+        let a = std::sync::Arc::new(crate::app::App::new(db, std::env::temp_dir(), 1, "x".into()));
+        let _ = api(&a, &Method::POST, "/api/danger", "", json!({"op": "history"})).await;
+        assert!(a.db.jg(m1).is_some(), "M2 still depends on M1");
+        assert!(a.db.jg(old).is_none());
+        a.db.pset(pid, &[("st", json!("done"))]);
+        let _ = api(&a, &Method::POST, "/api/danger", "", json!({"op": "history"})).await;
+        assert!(a.db.jg(m1).is_none());
     }
 
     #[tokio::test]
