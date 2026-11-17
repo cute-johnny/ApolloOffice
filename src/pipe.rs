@@ -1069,9 +1069,11 @@ async fn fix(a: &Ax, j: &mut Job, fb0: String, k0: u64) -> R<Value> {
                 }
             }
             let tr = tester_stage(a, j, false).await?;
-            if tr["ok"] == false {
+            // Only an explicit `"ok": true` passes; an answer that is not JSON
+            // or has no verdict used to slip through as a pass.
+            if tr["ok"].as_bool() != Some(true) {
                 let bugs = tr["bugs_found"].to_string();
-                let sum = tr["summary"].as_str().unwrap_or("E2E checks failed");
+                let sum = tr["summary"].as_str().unwrap_or(if tr.is_object() { "E2E checks failed" } else { "the Tester returned no JSON verdict" });
                 fb = format!("Tester failed: {sum}\nBugs found: {bugs}");
                 continue;
             }
