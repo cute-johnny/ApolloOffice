@@ -292,14 +292,20 @@ pub async fn call(a: &Ax, r: &Rn, n: &str, g: &Value) -> Result<ToolOut, String>
                 json!({"url": url, "out": out_rel, "vw": vw, "vh": vh, "fullPage": full_page, "actions": actions}).to_string(),
             );
             let script_b64 = base64::engine::general_purpose::STANDARD.encode(INSPECT_SCRIPT.as_bytes());
+            // INSPECT_SCRIPT is CommonJS (`require`), so it must not be saved as
+            // .mjs, where Node runs it as an ES module and `require` is undefined.
+            // One file per job, so two jobs on one machine do not overwrite it.
+            let sf = format!("/tmp/apollo-inspect-{}.cjs", r.job.unwrap_or(0));
             let cmd = format!(
-                "cd \"{d}\" && mkdir -p .apollo/artifacts && echo {} | base64 -d > /tmp/apollo-inspect.mjs && NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules node /tmp/apollo-inspect.mjs {} 2>&1",
+                "cd \"{d}\" && mkdir -p .apollo/artifacts && echo {} | base64 -d > {sf} && NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules node {sf} {} 2>&1",
                 q(&script_b64),
                 q(&cfg_b64),
             );
             let o = hx(a, &r.h, &cmd, 120).await;
             if o.c != 0 {
-                return Err(format!("inspect_page failed (exit {}): {}", o.c, crate::sh::last(&o.all(), 1500)));
+                // The page's console output can contain the job's secrets.
+                let secs = job_secrets(a, r.job);
+                return Err(format!("inspect_page failed (exit {}): {}", o.c, crate::sh::last(&scrub_secrets(&o.all(), &secs), 1500)));
             }
             let mut images = vec![];
             let sz_out = hx(a, &r.h, &format!("cd \"{d}\" && wc -c < {}", q(&out_rel)), 30).await;
