@@ -1994,6 +1994,26 @@ async fn land_milestone(a: &Ax, j: &mut Job) -> R<()> {
     Ok(())
 }
 
+/// Whether a job may be submitted without the owner's approval: the repo is
+/// in "auto" mode, or the job only rebases or reviews an existing PR.
+fn auto_submit(a: &Ax, j: &Job) -> bool {
+    !crate::routing::enabled(a) && (rp(a, &j.repo)["mode"].as_str() == Some("auto") || matches!(j.kind.as_str(), "rebase" | "review"))
+}
+
+/// Parks a job in "approve" unless it may be submitted now. Every path that
+/// reaches submit() goes through here, fresh and resumed jobs alike.
+async fn hold_for_approval(a: &Ax, j: &Job) -> R<()> {
+    if auto_submit(a, j) || j.d["ap"].as_bool() == Some(true) {
+        return Ok(());
+    }
+    a.db.jset(j.id, &[("st", json!("approve")), ("why", json!("waiting for your approval"))]);
+    a.st("submit", "idle", None, "ok");
+    a.say("submit", &format!("{} is ready and waits for your approval", j.tag()), Some(j.id));
+    a.note("PR waits for approval", &format!("{}: {}", j.tag(), j.d["pt"].as_str().unwrap_or("")), 3);
+    clean(a, j).await;
+    Err(X::Back(String::new()))
+}
+
 async fn go(a: &Ax, id: i64, h: &str) {
     let Some(mut j) = a.db.jg(id) else { return };
     let rs = j.d["rs"].as_bool().unwrap_or(false);
@@ -2030,6 +2050,15 @@ async fn go(a: &Ax, id: i64, h: &str) {
             gate(a, &mut jj).await?;
             j = jj;
             kill(a, &j)?;
+            // A job interrupted before its description was written gets one
+            // now, then waits for approval like a fresh job: the resumed path
+            // used to submit straight away, even in "ask" mode.
+            if j.s("pt").is_empty() {
+                mkbody(a, &mut j).await?;
+                j.d["pbase"] = json!(j.s("base"));
+                a.db.jd(&j);
+            }
+            hold_for_approval(a, &j).await?;
         } else {
             if j.kind == "architect" {
                 crate::arch::run(a, &mut j).await?;
@@ -2209,15 +2238,7 @@ async fn go(a: &Ax, id: i64, h: &str) {
             mkbody(a, &mut j).await?;
             j.d["pbase"] = json!(j.s("base"));
             a.db.jd(&j);
-            let auto = !crate::routing::enabled(a) && (rp(a, &j.repo)["mode"].as_str() == Some("auto") || matches!(j.kind.as_str(), "rebase" | "review"));
-            if !auto && !j.d["ap"].as_bool().unwrap_or(false) {
-                a.db.jset(id, &[("st", json!("approve")), ("why", json!("waiting for your approval"))]);
-                a.st("submit", "idle", None, "ok");
-                a.say("submit", &format!("{} is ready and waits for your approval", j.tag()), Some(id));
-                a.note("PR waits for approval", &format!("{}: {}", j.tag(), j.d["pt"].as_str().unwrap_or("")), 3);
-                clean(a, &j).await;
-                return Err(X::Back(String::new()));
-            }
+            hold_for_approval(a, &j).await?;
         }
         let mut jj = j.clone();
         let (u, n) = stage(a, "submit", || {
@@ -3026,6 +3047,33 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'output_tok
         }
         std::env::remove_var("APOLLO_OFFICE_GH");
         std::fs::remove_dir_all(dd).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_job_waits_for_approval_unless_the_repo_submits_on_its_own() {
+        let db = crate::db::Db::mem();
+        db.run("insert into hs(id,on_) values('local',1)", pa![]);
+        db.run("insert into rp(full,mode) values('o/ask','ask')", pa![]);
+        db.run("insert into rp(full,mode) values('o/auto','auto')", pa![]);
+        let a = std::sync::Arc::new(crate::app::App::new(db, std::env::temp_dir(), 1, "x".into()));
+        // A resumed fix in an "ask" repo (the path that used to skip approval).
+        let id = a.db.jnew("o/ask", 0, "fix", "Bug", "", "ready", "", json!({"h": "local", "rs": true, "ap": false, "pt": "Fix bug"}), None, 0.0);
+        let j = a.db.jg(id).unwrap();
+        assert!(matches!(hold_for_approval(&a, &j).await, Err(X::Back(ref r)) if r.is_empty()));
+        assert_eq!(a.db.jg(id).unwrap().st, "approve");
+        // Malformed grants do not count as approval.
+        for grant in [Value::Null, json!("true"), json!(1)] {
+            let mut j = a.db.jg(id).unwrap();
+            j.d["ap"] = grant;
+            assert!(hold_for_approval(&a, &j).await.is_err());
+        }
+        // Approved, or in an "auto" repo, it goes on to submit.
+        let mut j = a.db.jg(id).unwrap();
+        j.d["ap"] = json!(true);
+        assert!(hold_for_approval(&a, &j).await.is_ok());
+        let auto = a.db.jnew("o/auto", 0, "fix", "Bug", "", "ready", "", json!({"h": "local"}), None, 0.0);
+        assert!(hold_for_approval(&a, &a.db.jg(auto).unwrap()).await.is_ok());
+        assert_eq!(a.db.jg(auto).unwrap().st, "ready");
     }
 
     /// An office with one machine, one repository and a running project.
