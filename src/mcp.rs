@@ -281,19 +281,32 @@ pub fn valid_env_name(name: &str) -> bool {
     ok && !RESERVED_ENV.contains(&name)
 }
 
+/// The secrets the owner gave a job (ask_user), plus those given to any
+/// milestone of its project, so a later milestone does not ask again. The
+/// job's own value wins when both have the same name.
 pub fn job_secrets(a: &Ax, job_id: Option<i64>) -> Vec<(String, String)> {
     let Some(id) = job_id else { return vec![] };
-    let pat = format!("sec:jobenv:{id}:%");
-    let prefix = format!("sec:jobenv:{id}:");
-    let rows = a.db.all("select k from kv where k like ? order by k", crate::pa![pat]);
+    let mut out = match a.db.jg(id).and_then(|j| j.project_id) {
+        Some(pid) => vault_envs(a, &format!("jobenv:p{pid}:")),
+        None => vec![],
+    };
+    for (k, v) in vault_envs(a, &format!("jobenv:{id}:")) {
+        out.retain(|(n, _)| *n != k);
+        out.push((k, v));
+    }
+    out
+}
+
+/// Every `<prefix><ENV_NAME>` value in the vault.
+fn vault_envs(a: &Ax, prefix: &str) -> Vec<(String, String)> {
+    let rows = a.db.all("select k from kv where k like ? order by k", crate::pa![format!("sec:{prefix}%")]);
     let mut out = vec![];
     for row in rows {
-        let Some(k) = row["k"].as_str() else { continue };
-        let Some(env_name) = k.strip_prefix(&prefix) else { continue };
+        let Some(env_name) = row["k"].as_str().and_then(|k| k.strip_prefix("sec:")).and_then(|k| k.strip_prefix(prefix)) else { continue };
         if !valid_env_name(env_name) {
             continue;
         }
-        if let Ok(val) = crate::vault::get(a, &format!("jobenv:{id}:{env_name}")) {
+        if let Ok(val) = crate::vault::get(a, &format!("{prefix}{env_name}")) {
             if !val.is_empty() {
                 out.push((env_name.to_string(), val));
             }

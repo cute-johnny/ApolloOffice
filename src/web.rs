@@ -982,9 +982,9 @@ pub(crate) fn answer_job_inner(a: &Ax, b: &Value) -> Result<Value, (StatusCode, 
         Some(v) if v.is_object() => v.clone(),
         _ => json!({}),
     };
-    let is_secret = b["secret"]
-        .as_bool()
-        .unwrap_or_else(|| qv["secret"].as_bool().unwrap_or(false));
+    // The question decides: a client sending `secret: false` cannot turn a
+    // secret question into a plain answer that is logged and shown.
+    let is_secret = qv["secret"].as_bool() == Some(true) || b["secret"].as_bool() == Some(true);
     let ans = b["answer"].as_str().unwrap_or("").to_string();
     if ans.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "answer cannot be empty".into()));
@@ -1002,6 +1002,12 @@ pub(crate) fn answer_job_inner(a: &Ax, b: &Value) -> Result<Value, (StatusCode, 
         }
         if let Err(err) = crate::vault::put(a, &format!("jobenv:{id}:{env_name}"), ans.trim()) {
             return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("failed to encrypt secret: {err}")));
+        }
+        // Later milestones of the same project get it too (see job_secrets).
+        if let Some(pid) = j.project_id {
+            if let Err(err) = crate::vault::put(a, &format!("jobenv:p{pid}:{env_name}"), ans.trim()) {
+                return Err((StatusCode::INTERNAL_SERVER_ERROR, format!("failed to encrypt secret: {err}")));
+            }
         }
         let mut envs = j.d["secret_envs"].as_array().cloned().unwrap_or_default();
         if !envs.iter().any(|x| x.as_str() == Some(&env_name)) {
@@ -1714,6 +1720,31 @@ mod t {
         assert_eq!(crate::vault::get(&a, "jobenv:1:STRIPE_KEY").unwrap(), "sk_live_secret_value_123");
         assert_eq!(a.db.pg(pid).unwrap().st, "running");
         assert!(!st.to_string().contains("sk_live_secret_value_123"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_secret_answer_reaches_later_milestones_and_cannot_be_downgraded() {
+        std::env::set_var("APOLLO_OFFICE_VAULT", "file");
+        let root = std::env::temp_dir().join(format!("apollo-web-psec-{}", hex::encode(rand::random::<[u8; 6]>())));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = crate::db::Db::mem();
+        let pid = db.pnew("u/app", "App", "spec", "epic/app", true, 12.0);
+        let ask = json!({"question": "Provide the API key", "secret": true, "env_name": "API_KEY"}).to_string();
+        let m1 = db.jnew_proj("u/app", 0, "build", "M1", "", "need_user", "", json!({}), None, 0.0, Some(pid), 1, &[], "epic/app");
+        let m2 = db.jnew_proj("u/app", 0, "build", "M2", "", "ready", "", json!({}), None, 0.0, Some(pid), 2, &[m1], "epic/app");
+        let other = db.jnew("u/other", 0, "fix", "Bug", "", "ready", "", json!({}), None, 0.0);
+        db.jset(m1, &[("question_json", json!(ask))]);
+        let a = std::sync::Arc::new(crate::app::App::new(db, root.clone(), 1, "x".into()));
+        // `secret: false` from the client does not make the secret a plain answer.
+        answer_job_inner(&a, &json!({"id": m1, "answer": "key_live_123456", "secret": false})).unwrap();
+        assert!(!a.db.jg(m1).unwrap().d.to_string().contains("key_live_123456"));
+        let want = vec![("API_KEY".to_string(), "key_live_123456".to_string())];
+        assert_eq!(crate::mcp::job_secrets(&a, Some(m2)), want, "M2 sees the key given to M1");
+        assert!(crate::mcp::job_secrets(&a, Some(other)).is_empty(), "other jobs do not");
+        // A milestone's own answer wins over the project's.
+        crate::vault::put(&a, &format!("jobenv:{m2}:API_KEY"), "key_test_999999").unwrap();
+        assert_eq!(crate::mcp::job_secrets(&a, Some(m2)), vec![("API_KEY".to_string(), "key_test_999999".to_string())]);
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -72,6 +72,52 @@ pub(crate) async fn x(a: &Ax, j: &Job, s: &str, t: u64) -> Out {
     hx(a, &j.h(), &format!("cd \"{}\" && {s}", dir(a, j)), t).await
 }
 
+/// x() for commands that run the repository's own code (setup, tests): the
+/// job's secrets are exported, as for the CI command and the `sh` tool, and
+/// scrubbed from what comes back.
+async fn xsec(a: &Ax, j: &Job, s: &str, t: u64) -> Out {
+    let secs = crate::mcp::job_secrets(a, Some(j.id));
+    if secs.is_empty() {
+        return x(a, j, s, t).await;
+    }
+    let mut o = x(a, j, &format!("{} {s}", crate::mcp::shell_env_prefix(&secs)), t).await;
+    o.o = crate::mcp::scrub_secrets(&o.o, &secs);
+    o.e = crate::mcp::scrub_secrets(&o.e, &secs);
+    o
+}
+
+/// Shell commands that commit every change in the job's folder, except files
+/// containing one of the job's secret values: those stay uncommitted, so a
+/// key a worker wrote into a file never lands in a commit or a PR.
+fn commit_all_cmd(secs: &[(String, String)], msg: &str) -> String {
+    // Each value as written, and as it appears inside a JSON or JS string.
+    let mut vals: Vec<String> = vec![];
+    for (_, v) in secs.iter().filter(|(_, v)| v.len() >= 4) {
+        let j = serde_json::to_string(v).unwrap_or_default();
+        for x in [v.clone(), j.trim_matches('"').to_string()] {
+            if !vals.contains(&x) {
+                vals.push(x);
+            }
+        }
+    }
+    let keep_out = if vals.is_empty() {
+        String::new()
+    } else {
+        let ex: String = vals.iter().enumerate().map(|(i, v)| format!("export AO_S{i}={}; ", q(v))).collect();
+        let pats: String = (0..vals.len()).map(|i| format!(" -e \"$AO_S{i}\"")).collect();
+        format!(" && {{ {ex}f=$(git grep --cached -l -F{pats} 2>/dev/null); if [ -n \"$f\" ]; then printf '%s\\n' \"$f\" | while IFS= read -r p; do git reset -q -- \"$p\"; done; echo \"[kept out of the commit: secret in $(echo $f)]\"; fi; }}")
+    };
+    format!("git add -A{keep_out} && git commit -qm {}", q(msg))
+}
+
+async fn commit_all(a: &Ax, j: &Job, msg: &str, t: u64) -> Out {
+    let o = x(a, j, &commit_all_cmd(&crate::mcp::job_secrets(a, Some(j.id)), msg), t).await;
+    if o.o.contains("[kept out of the commit") {
+        a.say("repro", &format!("{}: a file with a secret value was left out of the commit", j.tag()), Some(j.id));
+    }
+    o
+}
+
 pub(crate) async fn ok(a: &Ax, j: &Job, s: &str, t: u64) -> R<String> {
     let ro = Regex::new(r"^git (log|diff|rev-parse|rev-list|status|symbolic-ref|range-diff) [^;&|]*(\| head -c \d+)?$").unwrap();
     let mut r = x(a, j, s, t).await;
@@ -333,7 +379,7 @@ pub(crate) async fn prep(a: &Ax, j: &mut Job) -> R<()> {
     let su = setup_cmd(a, j);
     if !su.is_empty() && !(j.kind == "build" && j.milestone_idx == 1) {
         a.say("repro", &format!("[{}] setup: {}", j.h(), crate::sh::head(&su, 80)), Some(j.id));
-        let r = x(a, j, &format!("to 1800 bash -c {} 2>&1 | tail -c 3000; exit ${{PIPESTATUS[0]}}", q(&su)), 1900).await;
+        let r = xsec(a, j, &format!("to 1800 bash -c {} 2>&1 | tail -c 3000; exit ${{PIPESTATUS[0]}}", q(&su)), 1900).await;
         if r.c != 0 {
             let mut reason = format!("setup command failed (exit {}): {}", r.c, crate::sh::last(r.o.trim(), 300));
             // Diagnostic only: the original setup error remains authoritative.
@@ -497,7 +543,7 @@ async fn dirty(a: &Ax, j: &Job) -> R<Option<String>> {
 
 async fn run_t(a: &Ax, j: &Job, at: &str, c: &str) -> (i32, String) {
     let l = format!("/tmp/ao-t-{}.log", j.id);
-    let r = x(a, j, &format!("rm -f {l}; if git checkout -q {} 2>&1; then {{ to 3600 bash -c {}\n}} > {l} 2>&1; e=$?; tail -c 30000 {l}; git checkout -q -f -- . 2>/dev/null; git clean -fdq 2>/dev/null; else e=125; echo \"[checkout failed]\"; git status --short 2>&1 | head -20; fi; echo \"[exit $e]\"", q(at), q(c)), 3700).await;
+    let r = xsec(a, j, &format!("rm -f {l}; if git checkout -q {} 2>&1; then {{ to 3600 bash -c {}\n}} > {l} 2>&1; e=$?; tail -c 30000 {l}; git checkout -q -f -- . 2>/dev/null; git clean -fdq 2>/dev/null; else e=125; echo \"[checkout failed]\"; git status --short 2>&1 | head -20; fi; echo \"[exit $e]\"", q(at), q(c)), 3700).await;
     let e = Regex::new(r"\[exit (\d+)\]\s*$").unwrap().captures(&r.o).and_then(|m| m[1].parse::<i32>().ok()).unwrap_or(-1);
     (e, r.o)
 }
@@ -1762,7 +1808,7 @@ pub(crate) async fn design_fix_stage(a: &Ax, j: &mut Job, standalone: bool) -> R
     if !dt.trim().is_empty() {
         let tr = trs(j);
         let msg = if tr.is_empty() { "design: polish UI/UX layout".to_string() } else { format!("design: polish UI/UX layout\n\n{}", tr.join("\n")) };
-        let _ = x(a, j, &format!("git add -A && git commit -qm {}", q(&msg)), 60).await;
+        let _ = commit_all(a, j, &msg, 60).await;
     }
     j.d["design"] = js.clone();
     a.db.jd(j);
@@ -1830,7 +1876,7 @@ pub(crate) async fn tester_stage(a: &Ax, j: &mut Job, standalone: bool) -> R<Val
         if !dt.trim().is_empty() {
             let tr = trs(j);
             let msg = if tr.is_empty() { "test: add E2E verification tests".to_string() } else { format!("test: add E2E verification tests\n\n{}", tr.join("\n")) };
-            let _ = x(a, j, &format!("git add -A && git commit -qm {}", q(&msg)), 60).await;
+            let _ = commit_all(a, j, &msg, 60).await;
         }
     }
     j.d["test_report"] = js.clone();
@@ -2280,7 +2326,9 @@ async fn go(a: &Ax, id: i64, h: &str) {
             let paused_st = jj.st.clone();
             let br = jj.s("br");
             if !jj.h().is_empty() && !br.is_empty() {
-                let _ = x(a, &jj, &format!("if [ -n \"$(git status --porcelain 2>/dev/null)\" ]; then git add -A && git commit -qm {}; fi", q("wip(ao): paused waiting for user input")), 120).await;
+                if !x(a, &jj, "git status --porcelain 2>/dev/null", 60).await.o.trim().is_empty() {
+                    let _ = commit_all(a, &jj, "wip(ao): paused waiting for user input", 120).await;
+                }
                 jj.d["rp"] = json!(true);
             }
             jj.d["paused_stage"] = json!(paused_st);
@@ -3074,6 +3122,46 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'output_tok
         let auto = a.db.jnew("o/auto", 0, "fix", "Bug", "", "ready", "", json!({"h": "local"}), None, 0.0);
         assert!(hold_for_approval(&a, &a.db.jg(auto).unwrap()).await.is_ok());
         assert_eq!(a.db.jg(auto).unwrap().st, "ready");
+    }
+
+    #[tokio::test]
+    async fn a_file_holding_a_secret_is_kept_out_of_the_commit() {
+        std::env::set_var("APOLLO_OFFICE_VAULT", "file");
+        let dd = std::env::temp_dir().join(format!("apollo-sec-commit-{}", hex::encode(rand::random::<[u8; 8]>())));
+        let repo = dd.join("work/o__r");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git").args(args).current_dir(&repo).output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git(&["init", "-q", "-b", "work"]);
+        git(&["config", "user.name", "fixture"]);
+        git(&["config", "user.email", "fixture@localhost"]);
+        std::fs::write(repo.join("app.js"), "v1\n").unwrap();
+        git(&["add", "app.js"]);
+        git(&["commit", "-qm", "base"]);
+        let db = crate::db::Db::mem();
+        db.run("insert into hs(id,ssh,dk,raw,on_) values('local','',0,1,1)", pa![]);
+        let id = db.jnew("o/r", 0, "fix", "Bug", "", "fix", "", json!({"h": "local", "br": "work"}), None, 0.0);
+        let a = std::sync::Arc::new(crate::app::App::new(db, dd.clone(), 1, "x".into()));
+        crate::vault::put(&a, &format!("jobenv:{id}:API_KEY"), "sk_live_it's \"quoted\" 42").unwrap();
+        std::fs::write(repo.join("app.js"), "v2\n").unwrap();
+        std::fs::write(repo.join("config.js"), "const key = \"sk_live_it's \\\"quoted\\\" 42\";\n").unwrap();
+        std::fs::write(repo.join("leak.txt"), "sk_live_it's \"quoted\" 42\n").unwrap();
+        let j = a.db.jg(id).unwrap();
+        let o = commit_all(&a, &j, "wip(ao): paused", 60).await;
+        assert!(o.o.contains("kept out of the commit"), "{}", o.all());
+        let committed = git(&["show", "--name-only", "--format=", "HEAD"]);
+        assert_eq!(committed, "app.js", "only the file without the secret is committed");
+        assert!(repo.join("leak.txt").exists(), "the file stays in the folder, uncommitted");
+        // Setup and test commands see the secret; their output does not show it.
+        let r = xsec(&a, &j, "printf '%s' \"$API_KEY\" | wc -c; echo \"$API_KEY\"", 30).await;
+        assert!(r.o.contains("24") && r.o.contains("[REDACTED:API_KEY]") && !r.o.contains("sk_live"), "{}", r.o);
+        // Without secrets everything is committed, as before.
+        std::fs::write(repo.join("app.js"), "v3\n").unwrap();
+        assert_eq!(commit_all_cmd(&[], "m"), "git add -A && git commit -qm 'm'");
+        let _ = std::fs::remove_dir_all(dd);
     }
 
     /// An office with one machine, one repository and a running project.
