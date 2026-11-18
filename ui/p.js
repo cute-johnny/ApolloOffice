@@ -138,7 +138,7 @@
         <label>USD per day</label><input type="number" name="bud" min="0" step="0.01" value="${r.bud || 0}">
       </div></div></div>
       <div class="sec"><h4>Your rules</h4><textarea name="rules" placeholder="optional, e.g. never touch the plugin API">${esc(r.rules)}</textarea></div>
-      <div class="sbar"><button class="pri" data-op="set" disabled>Saved</button><button type="button" data-op="detect">Detect test command</button><span class="msg"></span><span class="sp"></span><button type="button" class="dng" data-op="del">Remove</button></div></form>`;
+      <div class="sbar"><button class="pri" data-op="set" disabled>All changes saved</button><button type="button" data-op="detect">Detect test command</button><span class="msg"></span><span class="sp"></span><button type="button" class="dng" data-op="del">Remove</button></div></form>`;
     const f = D.querySelector("form"), sb = f.querySelector('[data-op="set"]'), m = f.querySelector(".msg");
     const dirty = () => { sb.disabled = false; sb.textContent = "Save changes"; m.textContent = ""; };
     f.addEventListener("input", dirty);
@@ -166,9 +166,10 @@
       busy(b, true, "Saving…");
       const r2 = await post({ op: "set", full, ...fv(f) }, "/api/repo");
       if (r2.error) { busy(b, false, "Save changes"); m.className = "msg bad2"; m.textContent = r2.error; return; }
-      busy(b, true, "Saved");
+      busy(b, true, "All changes saved");
       m.className = "msg"; m.textContent = "";
-      repos();
+      await repos();
+      rdet(full);
     };
   };
   const repos = async () => {
@@ -179,7 +180,7 @@
     const P0 = B, rs = cfg.repos;
     const sum = (k) => rs.reduce((s, r) => s + ((r.st || {})[k] || 0), 0);
     const flags = (r) => { const x = r.st || {}, c = []; if (!yes(r.on_)) c.push(`<i>Paused</i>`); if (!r.ci) c.push(`<i class="bad2">No test command</i>`); if (x.red) c.push(`<i class="bad2">Main is red</i>`); return c.join(""); };
-    const work = (r) => { const x = r.st || {}; return [yes(r.iss) && (x.iv > 0 ? `Issues, every ${x.iv >= 60 ? x.iv / 60 + " h" : x.iv + " min"}` : "Issues"), yes(r.hunt) && "Hunt", yes(r.feat) && "Features"].filter(Boolean).join(", ") || `<span class="t2">Off</span>`; };
+    const work = (r) => { const x = r.st || {}; return [yes(r.iss) && (x.iv > 0 ? `Issues, every ${x.iv >= 60 ? x.iv / 60 + " h" : x.iv + " min"}` : "Issues"), yes(r.hunt) && "Bug hunting", yes(r.feat) && "Features"].filter(Boolean).join(", ") || `<span class="t2">Off</span>`; };
     const row = (r) => { const x = r.st || {}, [o, n] = r.full.includes("/") ? r.full.split("/") : ["", r.full]; return `<tr data-r="${esc(r.full)}" class="${yes(r.on_) ? "" : "dim"}"><td><b>${esc(n)}</b><span class="mut">${esc(o)}${flags(r) ? " · " : ""}${flags(r)}</span></td><td>${work(r)}</td><td>${r.mode === "auto" ? "Automatic" : "Ask me"}</td><td>${pl(r.full) || `<span class="t2">–</span>`}</td><td class="n">${x.m14 || 0}</td><td class="n">${x.op || 0}</td><td class="n">${x.old ? `<span class="bad2">${x.old}</span>` : `<span class="t2">0</span>`}</td><td class="n">${x.q || 0}</td><td class="n">${usd(x.usd || 0)}</td></tr>`; };
     P0.innerHTML = ph(`${rs.filter((r) => yes(r.on_)).length} of ${rs.length} active. Click a repository to change what the office does there.`, `<form id="fa" class="inl"><input type="text" name="full" placeholder="owner/name or GitHub link" aria-label="Repository to add"><button class="go">Add repository</button></form>`)
       + `<div class="msg" id="am"></div>`
@@ -221,7 +222,7 @@
         ${nw && h.id !== "local" ? `<label>SSH host</label><input type="text" name="ssh" placeholder="alias from ~/.ssh/config or user@host"><div class="hint">Key login must work without a password prompt.</div>` : ""}
         <label>Isolation</label><select name="dk"><option value="1" ${h.dk !== 0 ? "selected" : ""}>Docker container (recommended)</option><option value="0" ${h.dk === 0 ? "selected" : ""}>directly on the machine</option></select>
         <div class="hint raw" ${h.dk === 0 ? "" : "hidden"}><span style="color:var(--bad)">Workers build and run code from the repositories you add, directly with your user account, which can reach your GitHub, Claude and SSH logins on this machine. Only do this for repositories you trust.</span><br>${tg("raw", h.dk === 0 && !nw, "I understand")}</div>
-        <label>Parallel jobs</label><input type="number" name="ln" min="1" max="8" value="${h.ln || 1}">
+        <label>Lanes</label><input type="number" name="ln" min="1" max="8" value="${h.ln || 1}"><div class="hint">Jobs and pipeline steps that can work on this machine at the same time.</div>
         <label>Parallel test runs</label><input type="number" name="ci" min="1" max="8" value="${h.ci || 1}">
         <label>CPU limit</label><input type="number" name="cpu" min="0" value="${h.cpu || 0}"><div class="hint">0 = all but one.</div>
         <label>Skip repos</label><input type="text" name="no" value="${esc(h.no || "")}" placeholder="optional, e.g. owner/big-repo, other-repo">
@@ -361,7 +362,7 @@
       </div></div></div>
       <div data-tab="gen" class="sec"><h4>Sign in</h4><div class="box">${cfg.google ? `<div class="ck"><b class="ok2">Google</b> ${esc(cfg.google)} can sign in.</div><div class="acts"><button type="button" class="dng" id="gu">Disconnect Google</button></div>` : `<div class="ck">Sign in with a one-time link from <code>apollo-office login-link</code>, or connect a Google account.</div><div class="acts"><button type="button" id="gl">Connect Google account</button></div>`}</div></div>
       <div data-tab="gen" class="sec"><h4>Work</h4><div class="box"><div class="fm">
-        <label>Hunters</label><input type="number" name="hunters" min="0" max="12" value="${s.hunters}">
+        <label>Hunters</label><input type="number" name="hunters" min="0" max="12" value="${s.hunters}"><div class="hint">How many Hunters of the <a href="#/team">bug-fix team</a> look for bugs at the same time.</div>
         <label>Daily token limit</label><input type="number" name="tokday" min="0" value="${s.tokday}"><div class="hint">0 = no limit.</div>
         <label>Front desk</label>${tg("orch", s.orch, "turn on the front desk orchestrator")}<div class="hint">Off by default. When on, the boss at the entrance takes requests in the chat, can put work on every worker at once, and runs multi-milestone app projects (Architect, Builder). While off, project work waits in the queue.</div>
         <label>Working hours</label><div class="acts" style="margin:0;align-items:center">${tg("whon", s.wh?.on, "only work from")}<input type="time" name="whf" aria-label="Start time" value="${esc(s.wh?.from || "08:00")}"> to <input type="time" name="wht" aria-label="End time" value="${esc(s.wh?.to || "22:00")}"></div>
@@ -528,16 +529,16 @@
     const t = c.today || {}, px = c.px || {};
     const tb = (h, rs) => `<div class="tw"><table class="tb2 ro"><thead><tr>${h.map((x) => `<th class="${x[1] || ""}">${x[0]}</th>`).join("")}</tr></thead><tbody>${rs.join("")}</tbody></table></div>`;
     const rate = (a, b) => b ? Math.round(100 * a / b) + "%" : "–";
-    const d14 = c.days.reduce((s, d) => s + (d.usd || 0), 0), v14 = c.days.reduce((s, d) => s + (d.val || 0), 0);
+    const d14 = c.days.reduce((s, d) => s + (d.usd || 0), 0), v14 = c.days.reduce((s, d) => s + (d.val || 0), 0), d7 = c.days.slice(0, 7).reduce((s, d) => s + (d.usd || 0), 0);
     const dm = new Map(c.days.map((d) => [d.day, d])), d0 = [new Date().toISOString().slice(0, 10), c.days[0]?.day || ""].sort().pop(), dd = c.days.length ? Array.from({ length: 14 }, (_, i) => { const k = new Date(Date.parse(d0 + "T00:00:00Z") - (13 - i) * 864e5).toISOString().slice(0, 10); return dm.get(k) || { day: k, usd: 0, val: 0 }; }) : [], mx = Math.max(0.01, ...dd.map((d) => (d.usd || 0) + (d.val || 0)));
     const nil = `<div class="emp"><b>Nothing yet</b><span>Costs show up after the first jobs ran.</span></div>`;
-    B.innerHTML = ph(`API keys are billed per token. Claude Code and Codex logins cost nothing extra, their value is shown for comparison.${t.unk ? ` ${t.unk} calls today had no known price.` : ""}`)
-      + kpi([[usd(t.usd || 0), "API today"], [usd(t.val || 0), "login value today"], [usd(d14), "API, 14 days"], [c.budday ? usd(c.budday) : "none", "daily budget"]])
+    B.innerHTML = ph(`API keys are billed per token, that is what you pay. Login value is what the same work would have cost with API keys while it ran on your Claude Code or Codex login, which costs nothing extra.${t.unk ? ` ${t.unk} calls today had no known price.` : ""}`)
+      + kpi([[usd(t.usd || 0), "API today"], [usd(d7), "API, 7 days"], [usd(d14), "API, 14 days"], [usd(c.days.slice(0, 7).reduce((s, d) => s + (d.val || 0), 0)), "login value, 7 days"], [c.budday ? usd(c.budday) : "none", "daily budget"]])
       + (c.hints.length ? `<section class="sec2"><h3>Cheaper models <span class="mut">${c.hints.length} ${c.hints.length === 1 ? "hint" : "hints"}</span></h3><div class="lst">${c.hints.slice(0, 3).map((h) => `<div class="hr2"><div><span class="t1">${esc(h)}</span></div></div>`).join("")}${c.hints.length > 3 ? `<details class="more"><summary>Show ${c.hints.length - 3} more</summary>${c.hints.slice(3).map((h) => `<div class="hr2"><div><span class="t1">${esc(h)}</span></div></div>`).join("")}</details>` : ""}</div></section>` : "")
       + `<section class="sec2"><h3>Last 14 days <span class="mut">${usd(d14)} API · ${usd(v14)} login value</span></h3>${dd.length ? `<div class="cch" role="img" aria-label="Daily cost, last 14 days: ${esc(dd.map((d) => `${d.day.slice(5)} ${usd(d.usd)} API, ${usd(d.val)} login`).join("; "))}">${dd.map((d) => `<div title="${esc(d.day)}: ${usd(d.usd)} API, ${usd(d.val)} login value"><i class="v" style="height:${((d.val || 0) / mx) * 100}%"></i><i class="u" style="height:${((d.usd || 0) / mx) * 100}%"></i><span>${esc(d.day.slice(8))}</span></div>`).join("")}</div><div class="lgd"><span><i class="u"></i>API</span><span><i class="v"></i>Login value</span></div>` : nil}</section>`
       + `<section class="sec2"><h3>Pipelines <span class="mut">30 days</span></h3>${(c.flows || []).length ? tb([["Pipeline"], ["Runs", "n"], ["API", "n"], ["Login value", "n"], ["Per run", "n"]], c.flows.map((f) => `<tr><td>${esc(f.n || f.flow)}</td><td class="n">${f.runs}</td><td class="n">${usd(f.usd)}</td><td class="n">${usd(f.val)}</td><td class="n">${f.runs ? usd(((f.usd || 0) + (f.val || 0)) / f.runs) : "–"}</td></tr>`)) : `<div class="emp"><b>No pipeline costs yet</b><span>Costs of pipeline steps show up here after their first runs.</span></div>`}</section>`
       + `<section class="sec2"><h3>Repositories <span class="mut">30 days</span></h3>${c.repos.length ? tb([["Repository"], ["Jobs", "n"], ["API", "n"], ["Login value", "n"]], c.repos.map((r) => `<tr><td>${esc(r.repo)}</td><td class="n">${r.jobs}</td><td class="n">${usd(r.usd)}</td><td class="n">${usd(r.val)}</td></tr>`)) : nil}</section>`
-      + `<section class="sec2"><h3>Models per worker <span class="mut">90 days</span></h3>${c.stats.length ? tb([["Repository"], ["Worker"], ["Model"], ["Jobs", "n"], ["PRs", "n"], ["Merged", "n"], ["Rejected", "n"], ["Per job", "n"], ["Per merge", "n"]], c.stats.map((r) => `<tr><td>${esc(r.repo)}</td><td>${esc(A.NM?.[r.w] || r.w)}</td><td>${esc(r.nm)}${r.sub ? ` <span class="mut">login</span>` : ""}</td><td class="n">${r.jobs}</td><td class="n">${r.prs}</td><td class="n">${r.mg} <span class="mut">${rate(r.mg, r.prs)}</span></td><td class="n">${r.cl}</td><td class="n">${usd(r.usd == null ? null : r.usd / r.jobs)}</td><td class="n">${r.mg && r.usd != null ? usd(r.usd / r.mg) : "–"}</td></tr>`)) : nil}</section>`
+      + `<section class="sec2"><h3>Bug-fix team models <span class="mut">90 days</span></h3>${c.stats.length ? tb([["Repository"], ["Worker"], ["Model"], ["Jobs", "n"], ["PRs", "n"], ["Merged", "n"], ["Rejected", "n"], ["Per job", "n"], ["Per merge", "n"]], c.stats.map((r) => `<tr><td>${esc(r.repo)}</td><td>${esc(A.NM?.[r.w] || r.w)}</td><td>${esc(r.nm)}${r.sub ? ` <span class="mut">login</span>` : ""}</td><td class="n">${r.jobs}</td><td class="n">${r.prs}</td><td class="n">${r.mg} <span class="mut">${rate(r.mg, r.prs)}</span></td><td class="n">${r.cl}</td><td class="n">${usd(r.usd == null ? null : r.usd / r.jobs)}</td><td class="n">${r.mg && r.usd != null ? usd(r.usd / r.mg) : "–"}</td></tr>`)) : nil}</section>`
       + `<section class="sec2"><h3>Budget and prices</h3><div class="box"><form id="fb" class="fm"><label>Daily budget</label><input type="number" name="budday" min="0" step="0.01" value="${c.budday || 0}"><div class="hint">USD for API keys, 0 = no limit.</div>
         <label>Prices</label><textarea id="px" placeholder="model input output, e.g. gpt-5.5 5 30">${esc(Object.entries(px).map(([k, v]) => k + " " + v.join(" ")).join("\n"))}</textarea><div class="hint">USD per million tokens, one model per line: <code>model input output</code> or <code>model input cache-write cache-read output</code>. Overrides the built-in prices. Claude Code reports its own cost.</div></form>
         <div class="acts"><button class="pri" id="bb">Save</button><span class="msg" id="bm"></span></div></div></section>`;
@@ -818,6 +819,7 @@ let nq = null;
         <div class="cl rs"><label>Width <input type="range" id="czW" min="30" max="80"></label></div>
         <div class="cl rs"><label>Depth <input type="range" id="czH" min="16" max="40"></label></div>
         <h5><span>Furniture</span></h5>
+        <p class="hint">Workers in active pipelines need a desk with a chair right above or below it. A green dot marks a desk and chair that belong together, a red one is missing its partner. Select a chair to choose who sits there.</p>
         <div class="pg fu">${Object.entries(U.cat).map(([k, f]) => `<button type="button" data-f="${k}" class="${cu.tool === k ? "on" : ""}"><canvas width="96" height="60"></canvas>${f.n}</button>`).join("")}</div>
         <div class="ac"><button type="button" id="czU" ${cu.undo ? "" : "disabled"} title="Ctrl+Z">Undo</button><button type="button" id="czRd" ${cu.redo ? "" : "disabled"} title="Ctrl+Shift+Z">Redo</button><span class="sp"></span><button type="button" id="czClr" ${cu.n ? "" : "disabled"}>Clear all</button></div>
         <div class="ac"><button type="button" id="czSt" title="Replace the furniture with the starter office: 12 desks and a lounge">Use the starter office</button></div>

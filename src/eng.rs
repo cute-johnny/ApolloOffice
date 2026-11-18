@@ -89,14 +89,78 @@ pub fn port(d: &Value, n: &Value) -> String {
     }
 }
 
-fn host(a: &Ax, want: &str) -> Option<String> {
-    let net = a.lv.lock().unwrap().o.net.clone();
-    let ok = |id: &str| net.get(id).copied().unwrap_or(true);
-    let hs = crate::sh::hosts(a);
-    if !want.is_empty() {
-        return hs.iter().find(|h| h.id == want && ok(&h.id)).map(|h| h.id.clone());
+fn pb() -> &'static Mutex<HashMap<String, i64>> {
+    static P: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
+    P.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn pw() -> &'static Mutex<HashMap<String, i64>> {
+    static P: OnceLock<Mutex<HashMap<String, i64>>> = OnceLock::new();
+    P.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn pbusy(h: &str) -> i64 {
+    pb().lock().unwrap().get(h).copied().unwrap_or(0) + pw().lock().unwrap().get(h).copied().unwrap_or(0).min(1)
+}
+
+struct Want(Vec<String>);
+
+impl Drop for Want {
+    fn drop(&mut self) {
+        let mut m = pw().lock().unwrap();
+        for h in &self.0 {
+            if let Some(n) = m.get_mut(h) {
+                *n = (*n - 1).max(0);
+            }
+        }
     }
-    a.db.all("select id from hs where on_=1 order by id='local' desc, id", pa![]).iter().filter_map(|x| x["id"].as_str().map(String::from)).find(|id| ok(id))
+}
+
+struct Lane(String);
+
+impl Drop for Lane {
+    fn drop(&mut self) {
+        if let Some(n) = pb().lock().unwrap().get_mut(&self.0) {
+            *n = (*n - 1).max(0);
+        }
+    }
+}
+
+async fn claim(a: &Ax, id: i64, want: &str, who: &str) -> Result<Lane, String> {
+    let mut said = false;
+    let mut _want: Option<Want> = None;
+    loop {
+        if load(a, id).map(|x| x.0) == Some("stop".into()) {
+            return Err("stopped".into());
+        }
+        let net = a.lv.lock().unwrap().o.net.clone();
+        let hs: Vec<crate::sh::Ho> = crate::sh::hosts(a).into_iter().filter(|h| h.on && net.get(&h.id).copied().unwrap_or(true) && (want.is_empty() || h.id == want)).collect();
+        if hs.is_empty() {
+            return Err("no machine is online for this step".into());
+        }
+        let lv: Vec<String> = a.lv.lock().unwrap().ln.values().cloned().collect();
+        {
+            let mut p = pb().lock().unwrap();
+            let pick = hs.iter().map(|h| (h, lv.iter().filter(|k| k.split('#').next() == Some(h.id.as_str())).count() as i64 + p.get(&h.id).copied().unwrap_or(0))).filter(|(h, u)| *u < h.ln.max(1)).min_by_key(|(_, u)| *u).map(|(h, _)| h.id.clone());
+            if let Some(h) = pick {
+                *p.entry(h.clone()).or_insert(0) += 1;
+                return Ok(Lane(h));
+            }
+        }
+        if !said {
+            let ids: Vec<String> = hs.iter().map(|h| h.id.clone()).collect();
+            {
+                let mut m = pw().lock().unwrap();
+                for h in &ids {
+                    *m.entry(h.clone()).or_insert(0) += 1;
+                }
+            }
+            _want = Some(Want(ids));
+            a.say(who, &format!("waiting for a free lane{} (run {id})", if want.is_empty() { String::new() } else { format!(" on {want}") }), None);
+            said = true;
+        }
+        crate::app::sl(5000).await;
+    }
 }
 
 async fn step(a: &Ax, id: i64, d: &mut Value, n: &Value) -> Result<(Value, bool), String> {
@@ -137,13 +201,17 @@ async fn step(a: &Ax, id: i64, d: &mut Value, n: &Value) -> Result<(Value, bool)
     }
     let mut o = Ask::new(key(wid), md, sys, user);
     o.run = Some(id);
+    o.repo = d["input"]["repo"].as_str().filter(|r| r.contains('/')).map(String::from);
+    let mut _lane: Option<Lane> = None;
     o.ef = Some("medium");
     if !tl.iter().any(|t| *t == "shell" || *t == "files") && tl.contains(&"github") {
         o.rn = Some(Rn { h: "local".into(), dir: String::new(), w: String::new(), md: String::new(), tl: Some(vec!["github".into()]), sec: vec![], ..Default::default() });
         o.turns = 40;
         o.t = 20 * 60;
     } else if tl.iter().any(|t| *t == "shell" || *t == "files") {
-        let h = host(a, n["c"]["h"].as_str().unwrap_or("")).ok_or("no machine is online for this step")?;
+        let ln = claim(a, id, n["c"]["h"].as_str().unwrap_or(""), key(wid)).await?;
+        let h = ln.0.clone();
+        _lane = Some(ln);
         let dir = format!("{}/runs/r{id}", crate::sh::hbid(a, &h));
         let r = crate::sh::hx(a, &h, &format!("mkdir -p {}", crate::sh::q(&dir)), 60).await;
         if r.c != 0 {
@@ -267,6 +335,30 @@ async fn exec(a: Ax, id: i64) {
                 rec(&mut d, &n, "", inp, true, t0, None);
                 next = targets(&d, &nid, "out");
             }
+            "worker" | "check" if !seated(&a, n["c"]["w"].as_str().unwrap_or("")) => {
+                let wn = d["crew"].as_array().and_then(|c| c.iter().find(|x| x["id"] == n["c"]["w"]).and_then(|x| x["n"].as_str().map(String::from))).unwrap_or_else(|| "This worker".into());
+                d["vis"][&nid] = json!(v - 1);
+                q.push_front(nid.clone());
+                d["q"] = json!(q.iter().collect::<Vec<_>>());
+                let msg = format!("{wn} needs a desk with a chair. Place them in Edit office.");
+                let bt = d["blkt"].as_i64().unwrap_or_else(now);
+                if now() - bt > 24 * 3_600_000 {
+                    d["err"] = json!(format!("{wn} waited 24 hours for a desk with a chair."));
+                    d["q"] = json!(Vec::<String>::new());
+                    d["blk"] = Value::Null;
+                    store(&a, id, "fail", &d);
+                    a.say("pipe", &format!("{} stopped: {wn} had no desk for 24 hours (run {id})", d["flow"]["n"].as_str().unwrap_or("")), None);
+                    return;
+                }
+                d["blkt"] = json!(bt);
+                if d["blk"] != msg {
+                    a.say("pipe", &format!("{}: {msg} (run {id})", d["flow"]["n"].as_str().unwrap_or("")), None);
+                }
+                d["blk"] = json!(msg);
+                d["blkw"] = n["c"]["w"].clone();
+                store(&a, id, "queued", &d);
+                return;
+            }
             "worker" | "check" if gate(&d, &n) => {
                 d["vis"][&nid] = json!(v - 1);
                 d["wait"] = json!(nid);
@@ -278,23 +370,10 @@ async fn exec(a: Ax, id: i64) {
                 store(&a, id, "wait", &d);
                 return;
             }
-            "worker" | "check" if !seated(&a, n["c"]["w"].as_str().unwrap_or("")) => {
-                let wn = d["crew"].as_array().and_then(|c| c.iter().find(|x| x["id"] == n["c"]["w"]).and_then(|x| x["n"].as_str().map(String::from))).unwrap_or_else(|| "This worker".into());
-                d["vis"][&nid] = json!(v - 1);
-                q.push_front(nid.clone());
-                d["q"] = json!(q.iter().collect::<Vec<_>>());
-                let msg = format!("{wn} needs a desk with a chair. Place them in Edit office.");
-                if d["blk"] != msg {
-                    a.say("pipe", &format!("{}: {msg} (run {id})", d["flow"]["n"].as_str().unwrap_or("")), None);
-                }
-                d["blk"] = json!(msg);
-                d["blkw"] = n["c"]["w"].clone();
-                store(&a, id, "queued", &d);
-                return;
-            }
             "worker" | "check" => {
                 d["blk"] = Value::Null;
                 d["blkw"] = Value::Null;
+                d["blkt"] = Value::Null;
                 let wn = d["crew"].as_array().and_then(|c| c.iter().find(|x| x["id"] == n["c"]["w"]).and_then(|x| x["n"].as_str().map(String::from))).unwrap_or_default();
                 let wk = key(n["c"]["w"].as_str().unwrap_or(""));
                 let fname = d["flow"]["n"].as_str().unwrap_or("").to_string();
@@ -519,25 +598,30 @@ pub fn stop(a: &Ax, id: i64) -> Result<(), String> {
 }
 
 pub fn staff(a: &Ax) -> Vec<String> {
+    let busy: HashSet<String> = a.db.all("select distinct flow from runs where st in ('queued','run','wait')", pa![]).iter().filter_map(|x| x["flow"].as_str().map(String::from)).collect();
     let fl = a.db.kg("flows");
-    let used: HashSet<String> = fl.as_array().map(|fs| fs.iter().flat_map(|f| f["nodes"].as_array().cloned().unwrap_or_default()).filter_map(|n| n["c"]["w"].as_str().map(String::from)).collect()).unwrap_or_default();
+    let used: HashSet<String> = fl
+        .as_array()
+        .map(|fs| fs.iter().filter(|f| f["on"].as_bool().unwrap_or(false) || f["id"].as_str().is_some_and(|i| busy.contains(i))).flat_map(|f| f["nodes"].as_array().cloned().unwrap_or_default()).filter_map(|n| n["c"]["w"].as_str().map(String::from)).collect())
+        .unwrap_or_default();
     a.db.kg("crew").as_array().map(|c| c.iter().filter_map(|w| w["id"].as_str().map(String::from)).filter(|id| used.contains(id)).collect()).unwrap_or_default()
 }
 
-pub fn places(it: &[Value]) -> usize {
+pub fn places_at(it: &[Value]) -> Vec<(usize, Option<String>)> {
     let xy = |v: &Value| (v["x"].as_i64().unwrap_or(0), v["y"].as_i64().unwrap_or(0));
     let mut ds: Vec<(i64, i64)> = it.iter().filter(|x| x["i"] == "desk").map(xy).collect();
     ds.sort_by_key(|&(x, y)| (y, x));
-    let ch: Vec<(i64, i64)> = it.iter().filter(|x| x["i"] == "chair").map(xy).collect();
+    let ch: Vec<(usize, &Value)> = it.iter().enumerate().filter(|(_, x)| x["i"] == "chair").collect();
     let mut used = vec![false; ch.len()];
-    let mut n = 0;
+    let mut o = vec![];
     for (dx, dy) in ds {
         let mut best: Option<(usize, i64)> = None;
-        for (k, &(cx, cy)) in ch.iter().enumerate() {
-            if used[k] || cx + 2 <= dx || cx >= dx + 4 {
+        for (k, (_, c)) in ch.iter().enumerate() {
+            let (cx, cy) = xy(c);
+            if used[k] || cx + 3 <= dx || cx >= dx + 5 {
                 continue;
             }
-            let d = if (dy + 1..=dy + 3).contains(&cy) { cy - dy - 1 } else if (dy - 3..=dy - 1).contains(&cy) { dy - 1 - cy } else { continue };
+            let d = if (dy + 1..=dy + 4).contains(&cy) { cy - dy - 1 } else if (dy - 4..=dy - 1).contains(&cy) { dy - 1 - cy } else { continue };
             let s = d * 4 + (cx + 1 - (dx + 2)).abs();
             if best.is_none_or(|(_, b)| s < b) {
                 best = Some((k, s));
@@ -545,10 +629,17 @@ pub fn places(it: &[Value]) -> usize {
         }
         if let Some((k, _)) = best {
             used[k] = true;
-            n += 1;
+            o.push((ch[k].0, ch[k].1["w"].as_str().map(String::from)));
         }
     }
-    n
+    o
+}
+
+pub fn seat_map(st: &[String], ps: &[Option<String>]) -> Vec<String> {
+    let mut sat: Vec<String> = ps.iter().flatten().filter(|w| st.contains(w)).cloned().collect();
+    let free = ps.iter().filter(|w| w.as_ref().is_none_or(|w| !st.contains(w))).count();
+    sat.extend(st.iter().filter(|w| !sat.contains(w)).take(free).cloned().collect::<Vec<_>>());
+    sat
 }
 
 /// The office a new install starts with: two rows of six desks, each with its chair
@@ -601,12 +692,26 @@ pub fn seed_office(db: &crate::db::Db) {
     db.ks("office_seeded", &json!(true));
 }
 
-pub fn desks(a: &Ax) -> usize {
-    a.set()["office"]["items"].as_array().map(|it| places(it)).unwrap_or(0)
-}
-
 pub fn seated(a: &Ax, wid: &str) -> bool {
-    staff(a).iter().position(|x| x == wid).is_some_and(|i| i < desks(a))
+    let it = a.set()["office"]["items"].as_array().cloned().unwrap_or_default();
+    let st = staff(a);
+    let pa = places_at(&it);
+    let ps: Vec<Option<String>> = pa.iter().map(|x| x.1.clone()).collect();
+    if !seat_map(&st, &ps).iter().any(|w| w == wid) {
+        return false;
+    }
+    if !pa.iter().any(|(_, w)| w.as_deref() == Some(wid)) {
+        let fixed: Vec<&String> = ps.iter().flatten().filter(|w| st.contains(w)).collect();
+        let j = st.iter().filter(|w| !fixed.contains(w)).position(|w| w == wid).unwrap_or(0);
+        if let Some(&(ix, _)) = pa.iter().filter(|(_, w)| w.as_ref().is_none_or(|w| !st.contains(w))).nth(j) {
+            let mut s = a.db.kg("set");
+            if let Some(c) = s["office"]["items"].get_mut(ix) {
+                c["w"] = json!(wid);
+                a.db.ks("set", &s);
+            }
+        }
+    }
+    true
 }
 
 pub fn active(a: &Ax) -> Vec<Value> {
@@ -636,7 +741,7 @@ pub fn list(a: &Ax, fid: Option<&str>, st: Option<&str>, lim: i64) -> Vec<Value>
 pub fn get(a: &Ax, id: i64) -> Option<Value> {
     let r = a.db.one("select id, flow, st, t0, t1, d from runs where id=?", pa![id])?;
     let d = &r["d"];
-    Some(json!({"id": r["id"], "flow": r["flow"], "name": d["flow"]["n"], "st": r["st"], "t0": r["t0"], "t1": r["t1"], "input": d["input"], "steps": d["steps"], "wait": d["wait"], "err": d["err"]}))
+    Some(json!({"id": r["id"], "flow": r["flow"], "name": d["flow"]["n"], "st": r["st"], "t0": r["t0"], "t1": r["t1"], "input": d["input"], "steps": d["steps"], "wait": d["wait"], "err": d["err"], "blk": d["blk"], "ask": if r["st"] == "wait" { d["steps"].as_array().and_then(|s| s.last()).map(|s| s["out"]["ask"].clone()).unwrap_or(Value::Null) } else { Value::Null }}))
 }
 
 pub async fn runner(a: Ax) {
@@ -645,7 +750,7 @@ pub async fn runner(a: Ax) {
         if a.lv.lock().unwrap().o.man {
             continue;
         }
-        let ids: Vec<i64> = a.db.all("select id from runs where st='queued' order by id limit 10", pa![]).iter().filter_map(|x| x["id"].as_i64()).collect();
+        let ids: Vec<i64> = a.db.all("select id from runs where st='queued' order by json_extract(d,'$.blk') is not null, id limit 10", pa![]).iter().filter_map(|x| x["id"].as_i64()).collect();
         for id in ids {
             {
                 let mut b = busy().lock().unwrap();
@@ -774,14 +879,17 @@ mod t {
     #[test]
     fn places_pair_desks_with_chairs() {
         let it: Vec<serde_json::Value> = serde_json::from_str(r#"[{"i":"desk","x":6,"y":4},{"i":"chair","x":7,"y":6},{"i":"desk","x":16,"y":4},{"i":"chair","x":17,"y":1},{"i":"desk","x":30,"y":4},{"i":"chair","x":40,"y":6}]"#).unwrap();
-        assert_eq!(super::places(&it), 2);
+        assert_eq!(super::places_at(&it).len(), 2);
+        let st = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        assert_eq!(super::seat_map(&st, &[Some("c".into()), None]), vec!["c".to_string(), "a".to_string()]);
+        assert_eq!(super::seat_map(&st, &[Some("gone".into()), None]), vec!["a".to_string(), "b".to_string()]);
     }
 
     #[test]
     fn the_starter_office_seats_twelve_and_fits_the_room() {
         let o = super::starter_office();
         let it = o["items"].as_array().unwrap();
-        assert_eq!(super::places(it), 12);
+        assert_eq!(super::places_at(it).len(), 12);
         // Footprints and layers as in ui/o.js FC; the rug is the floor layer.
         let fp = |i: &str| match i { "desk" => (4, 2, 1), "chair" | "rack" => (2, 2, 1), "sofa" => (5, 2, 1), "table" => (3, 2, 1), "shelf" => (4, 1, 1), "coffee" => (2, 1, 1), "rug" => (6, 4, 0), "plant" | "cooler" | "lamp" => (1, 1, 1), x => panic!("{x} is not allowed in an office") };
         let (w, h) = (o["size"]["w"].as_i64().unwrap(), o["size"]["h"].as_i64().unwrap());
@@ -799,7 +907,7 @@ mod t {
     fn a_new_office_is_seeded_once_and_a_saved_one_is_kept() {
         let db = crate::db::Db::mem();
         super::seed_office(&db);
-        assert_eq!(super::places(db.kg("set")["office"]["items"].as_array().unwrap()), 12);
+        assert_eq!(super::places_at(db.kg("set")["office"]["items"].as_array().unwrap()).len(), 12);
         // Emptied on purpose afterwards: never seeded again.
         db.ks("set", &json!({"office": {"items": []}}));
         super::seed_office(&db);

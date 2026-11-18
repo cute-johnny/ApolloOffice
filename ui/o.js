@@ -163,15 +163,15 @@
   const places = () => {
     const ds = FU.map((u, k) => [u, k]).filter(([u]) => u.i === "desk").sort((a, b) => a[0].y - b[0].y || a[0].x - b[0].x);
     const ch = FU.map((u, k) => [u, k]).filter(([u]) => u.i === "chair"), used = new Set(), ps = [];
-    for (const [d] of ds) {
+    for (const [d, dkk] of ds) {
       let best = null, bd = 99;
       for (const [c, k] of ch) {
-        if (used.has(k) || c.x + 2 <= d.x || c.x >= d.x + 4) continue;
-        const dy = c.y >= d.y + 1 && c.y <= d.y + 3 ? c.y - d.y - 1 : c.y <= d.y - 1 && c.y >= d.y - 3 ? d.y - 1 - c.y : 99;
+        if (used.has(k) || c.x + 3 <= d.x || c.x >= d.x + 5) continue;
+        const dy = c.y >= d.y + 1 && c.y <= d.y + 4 ? c.y - d.y - 1 : c.y <= d.y - 1 && c.y >= d.y - 4 ? d.y - 1 - c.y : 99;
         const dd = dy * 4 + Math.abs(c.x + 1 - (d.x + 2));
         if (dy < 99 && dd < bd) { bd = dd; best = [c, k]; }
       }
-      if (best) { used.add(best[1]); ps.push({ k: best[1], back: best[0].y > d.y }); }
+      if (best) { used.add(best[1]); ps.push({ k: best[1], dk: dkk, back: best[0].y > d.y, w: best[0].w || null }); }
     }
     return ps;
   };
@@ -186,14 +186,22 @@
     return { cn, wk: cn > 0 || w.st === "work", job };
   };
   const crowd = () => ORD.filter((n) => S?.w?.[n] && !S.w[n].hold && (n !== "architect" || S.orch));
-  // Hired staff take desks first, as the backend counts them (eng::seated); built-ins only
-  // get the desks that are left and never count toward any limit.
+  window.AO.unseated = (ids) => {
+    const cr = (S?.crew || []).map((w) => w.id), st = cr.filter((id) => (S?.staff || []).includes(id) || ids.includes(id)), ps = places();
+    const taken = new Set(ps.filter((p) => p.w && st.includes(p.w)).map((p) => p.w)), free = ps.filter((p) => !p.w || !st.includes(p.w)).length;
+    const auto = st.filter((id) => !taken.has(id)).slice(0, free);
+    return ids.filter((id) => !taken.has(id) && !auto.includes(id));
+  };
   const seats = () => {
     const st = (S?.staff || []).filter((id) => (S?.crew || []).some((w) => w.id === id)), ps = places();
-    const m = new Map(), b = new Map(), bs = crowd(), left = ps.slice(st.length);
-    st.forEach((id, i) => { if (ps[i]) m.set(ps[i].k, { id, back: ps[i].back }); });
+    const m = new Map(), ids = new Set();
+    for (const p of ps) if (p.w && st.includes(p.w) && !ids.has(p.w)) { m.set(p.k, { id: p.w, back: p.back }); ids.add(p.w); }
+    const rest = st.filter((id) => !ids.has(id));
+    for (const p of ps) { if (m.has(p.k) || (p.w && st.includes(p.w))) continue; const id = rest.shift(); if (!id) break; m.set(p.k, { id, back: p.back }); ids.add(id); }
+    // Built-in workers take only the desks nobody hired is using and never count toward any limit.
+    const b = new Map(), bs = crowd(), left = ps.filter((p) => !m.has(p.k) && !(p.w && st.includes(p.w)));
     bs.forEach((n, i) => { if (left[i]) b.set(left[i].k, { n, back: left[i].back }); });
-    return { m, b, wait: st.slice(ps.length), bwait: bs.slice(left.length), ids: new Set(st.slice(0, ps.length)) };
+    return { m, b, wait: st.filter((id) => !ids.has(id)), bwait: bs.slice(left.length), ids };
   };
   const pst = (id) => {
     const rs = (S?.rn || []).filter((r) => r.w === id);
@@ -245,6 +253,14 @@
     }
     for (const [k, { id, back }] of sm.m) { const u = FU[k]; if (!u || (fdrag && fdrag.k === k)) continue; const nm = pname(id), on = pst(id) === "work"; tx(nm, u.x * 8 + 8 - (K.textWidth(nm) >> 1), GO + u.y * 8 + (back ? 18 : -6), on ? hl("c:" + id) : "#6b6f76"); }
     for (const [k, { n, back }] of sm.b) { const u = FU[k]; if (!u || (fdrag && fdrag.k === k)) continue; const nm = NM[n].slice(0, 10).toUpperCase(); tx(nm, u.x * 8 + 8 - (K.textWidth(nm) >> 1), GO + u.y * 8 + (back ? 18 : -6), bstat(n).wk ? hl(n) : "#6b6f76"); }
+    if (fedit) {
+      const ps = places(), pd = new Set(ps.map((p) => p.dk)), pc = new Set(ps.map((p) => p.k));
+      FU.forEach((u, k) => {
+        if (u.i !== "desk" && u.i !== "chair") return;
+        const ok = u.i === "desk" ? pd.has(k) : pc.has(k), w = FC[u.i].w * 8;
+        px(u.x * 8 + w - 5, GO + u.y * 8 - 2, 4, 4, ok ? "#5cbf6a" : "#e0675a");
+      });
+    }
     sm.wait.forEach((id, i) => { const x = 20 + i * 24, y = VH - 8; person(id, x, y, t, false); const nm = pname(id); tx(nm, x - (K.textWidth(nm) >> 1), y - 26, "#e0675a"); });
     // Built-ins without a desk stand together in the bottom-right corner; the strip and tooltips still work.
     sm.bwait.forEach((n, i) => { const x = VW - 20 - i * 24, y = VH - 8; if (x < 20 + sm.wait.length * 24) return; person(n, x, y, t, false, false, true); const nm = NM[n].slice(0, 10).toUpperCase(); tx(nm, x - (K.textWidth(nm) >> 1), y - 26 - (i % 2) * 9, bstat(n).wk ? hl(n) : "#6b6f76"); });
@@ -272,9 +288,18 @@
   fab.className = "fab"; fab.hidden = true;
   fab.innerHTML = `<button type="button" data-a="dup" title="Duplicate (Ctrl+D)">Duplicate</button><button type="button" data-a="del" class="dng" title="Remove (Delete)">Remove</button>`;
   $("stage").appendChild(fab);
+  const BTN = fab.innerHTML;
   const fabpos = () => {
     const u = FU[fsel];
     if (!fedit || !u || fdrag) { fab.hidden = true; return; }
+    const fk = fsel + ":" + u.i + ":" + (u.w || "") + ":" + (S?.crew || []).map((w) => w.id).join(",");
+    if (fab.dataset.k !== fk) {
+      fab.dataset.k = fk;
+      const st = S?.crew || [];
+      fab.innerHTML = (u.i === "chair" && st.length ? `<select data-a="seat" aria-label="Who sits here"><option value="">Seat: anyone free</option>${st.map((w) => `<option value="${esc(w.id)}" ${u.w === w.id ? "selected" : ""}>Seat: ${esc(w.n)}</option>`).join("")}</select>` : "") + BTN;
+      const se = fab.querySelector("[data-a=seat]");
+      if (se) se.onchange = () => { const v = se.value; snap(); for (const x of FU) if (x.i === "chair" && v && x.w === v) delete x.w; if (v) FU[fsel].w = v; else delete FU[fsel].w; commit(); };
+    }
     const r = cv.getBoundingClientRect(), sr = $("stage").getBoundingClientRect(), k = r.width / VW, f = FC[u.i];
     fab.hidden = false;
     const x = r.left - sr.left + (u.x * 8 + f.w * 4) * k, yt = r.top - sr.top + (GO + u.y * 8 - 6) * k - 6;
@@ -346,7 +371,7 @@
     room: () => ({ w: GX, h: GY, min: ext() }),
     size: (w, h) => { const [mw, mh] = ext(); w = Math.max(30, mw, Math.min(80, w | 0)); h = Math.max(16, mh, Math.min(40, h | 0)); room(w, h); clearTimeout(rsave); rsave = setTimeout(() => post({ office: { size: { w, h } } }, "/api/set").catch(() => {}), 400); return { w, h }; },
     loadRoom: (z) => { const w = z?.w | 0, h = z?.h | 0; room(w >= 30 && w <= 80 ? w : 50, h >= 16 && h <= 40 ? h : 28); },
-    load: (a) => { FU = Array.isArray(a) ? a.filter((u) => FC[u?.i] && Number.isInteger(u.x) && Number.isInteger(u.y)).map((u) => ({ i: u.i, x: u.x, y: u.y })) : []; },
+    load: (a) => { FU = Array.isArray(a) ? a.filter((u) => FC[u?.i] && Number.isInteger(u.x) && Number.isInteger(u.y)).map((u) => (u.i === "chair" && typeof u.w === "string" && u.w ? { i: u.i, x: u.x, y: u.y, w: u.w } : { i: u.i, x: u.x, y: u.y })) : []; },
     on: (f) => { fcb = f; },
     tick: fabpos,
   };
@@ -591,9 +616,14 @@
   try { lWrap = localStorage.getItem("ao.lw") === "1"; } catch {}
   const initLog = () => {
     const sw = $("logW"), sq = $("logQ"), wb = $("logWrap"), lg = $("log");
-    if (!sw || !sq || !wb || !lg || sw.dataset.inited) return;
-    sw.dataset.inited = "1";
+    const lk = (S?.crew || []).map((w) => w.id + w.n).join();
+    if (!sw || !sq || !wb || !lg || sw.dataset.inited === lk + "|") return;
+    const first = !sw.dataset.inited;
+    sw.dataset.inited = lk + "|";
+    (S?.crew || []).forEach((w) => { NM["c:" + w.id] = w.n || w.id; });
     sw.innerHTML = `<option value="">All workers</option>` + [...(S?.crew || []).map((w) => "c:" + w.id), "pipe", ...ORD, ...Object.keys(S?.w || {}).filter((k) => k.startsWith("x:"))].map((w) => `<option value="${w}">${esc(NM[w] || w)}</option>`).join("");
+    sw.value = lW;
+    if (!first) return;
     wb.classList.toggle("on", lWrap);
     lg.classList.toggle("wrap", lWrap);
     sw.onchange = () => { lW = sw.value; rlog(); };
@@ -614,7 +644,7 @@
   };
 
   const RQN = { queued: "Queued", run: "Running", wait: "Waiting for you" };
-  const rrow = (r) => { const w = (S.crew || []).find((x) => x.id === r.w); return `<div class="row jr${r.st === "wait" ? " apr" : ""}"><div class="ti"><a class="a" href="#" data-run="${r.id}">${esc(r.st === "wait" && r.ask ? r.ask : r.n || r.flow)}</a><div class="w"><span class="stt rs-${esc(r.blk ? "fail" : r.st)}">${esc(r.blk ? "Needs a desk" : RQN[r.st] || r.st)}</span><span>${esc(r.blk ? r.blk : r.st === "wait" && r.ask ? r.n || r.flow : w ? (r.nt === "check" ? w.n + " checks" : w.n + " works") : "Pipeline")}</span><span>run ${r.id}</span></div></div><span class="rp">${r.st === "wait" ? `<button class="go" data-ry="${r.id}">Yes</button><button data-rn="${r.id}">No</button>` : ""}</span></div>`; };
+  const rrow = (r) => { const w = (S.crew || []).find((x) => x.id === r.w); return `<div class="row jr${r.st === "wait" ? " apr" : ""}"><div class="ti"><a class="a" href="#" data-run="${r.id}">${esc(r.st === "wait" && r.ask ? r.ask : r.n || r.flow)}</a><div class="w"><span class="stt rs-${esc(r.blk ? "fail" : r.st)}">${esc(r.blk ? "Needs a desk" : RQN[r.st] || r.st)}</span><span>${esc(r.blk ? r.blk : r.st === "wait" && r.ask ? r.n || r.flow : w ? (r.nt === "check" ? w.n + " checks" : w.n + " works") : "Pipeline")}</span><span>run ${r.id}</span></div></div><span class="rp">${r.st === "wait" ? `<button class="go" data-ry="${r.id}">Yes</button><button data-rn="${r.id}">No</button>` : r.blk ? `<button data-desk="1">Edit office</button>` : ""}</span></div>`; };
   const lists = () => {
     const q = S.q, rx = S.rn || [];
     $("qn").textContent = [q.length ? q.length + (q.length === 1 ? " job" : " jobs") : "", rx.length ? rx.length + (rx.length === 1 ? " run" : " runs") : ""].filter(Boolean).join(" · ");
@@ -693,6 +723,8 @@
     if (rq) { post({ a: "requeue", id: Number(rq.dataset.rq) }).then(apply); return; }
     const ry = e.target.closest("[data-ry],[data-rn]");
     if (ry && ry.closest("#queue")) { const id = ry.dataset.ry || ry.dataset.rn; fetch(`/api/v2/runs/${id}/answer`, { method: "POST", headers: { "content-type": "application/json", "x-ao": "1" }, body: JSON.stringify({ yes: !!ry.dataset.ry }) }).then(() => get("/api/state")).then(apply); return; }
+    const dk = e.target.closest("[data-desk]");
+    if (dk && dk.closest("#queue")) { $("bCz").click(); return; }
     const ru = e.target.closest("[data-run]");
     if (ru && ru.closest("#queue")) { e.preventDefault(); window.AO.runView && window.AO.runView(Number(ru.dataset.run)); return; }
     const jb = e.target.closest("[data-j]");
@@ -747,7 +779,7 @@
     const sit = seats().ids.has(h.p);
     const cs = S.ev.filter((e) => e.w === k).slice(0, 3);
     return `<div class="th"><b>${esc(w.n || h.p)}</b><span>${esc(w.r || "")}</span></div>`
-      + tr("model", esc(mdn(w.md || "")))
+      + tr("model", esc(mdn(w.md || "") || "default model"))
       + tr("status", !sit ? `<span class="bad2">needs a desk with a chair</span>` : rs.some((r) => r.st === "run" && !r.blk) ? "working" : S.o.man ? "paused" : "idle")
       + rs.map((r) => tr("run", `${esc(r.n || r.flow)} <span class="k">run ${r.id}</span>`)).join("")
       + (cs.length ? `<div class="tc">${cs.map((e) => `<div><span class="k">${ago(e.t)}</span><span>${esc(e.m)}</span></div>`).join("")}</div>` : "")

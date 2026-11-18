@@ -36,12 +36,18 @@
   const PN = { ok: "good", back: "fix it", yes: "yes", no: "no" };
   const GR = { t: "#3fb6a8", w: "#6fa8dc", c: "#d0649f", l: "#9c7ae0", x: "#8d9199" };
   const TLN = { shell: "Run commands on my machines", files: "Read and change files", github: "Use GitHub: read issues and pull requests, comment and label in your repositories", web: "Look things up on the web" };
-  let D = null, cfg = null, cur = null, sel = null, esel = null, open = false, view = { x: 40, y: 40, k: 1 }, tmo = 0, hist = [], menu = null, hireFor = null, tab = "set";
+  let D = null, cfg = null, cur = null, sel = null, esel = null, open = false, view = { x: 40, y: 40, k: 1 }, tmo = 0, hist = [], menu = null, hireFor = null, tab = "set", ren = false;
   const R = $("fe");
   const outs = (n) => { const b = BK[n.t]; return typeof b.o === "function" ? b.o(n.c || {}) : b.o; };
   const fl = () => D.flows.find((f) => f.id === cur);
   const uid = (p, xs) => { let i = 1; while (xs.some((x) => x.id === p + i)) i++; return p + i; };
-  const save = () => { clearTimeout(tmo); tmo = setTimeout(() => post({ flows: D.flows, crew: D.crew }, "/api/flows").catch(() => {}), 400); };
+  const put = async () => {
+    const r = await post({ flows: D.flows, crew: D.crew, rev: D.rev }, "/api/flows");
+    if (r.error === "conflict") { D = { ...D, ...r }; if (!fl()) cur = D.flows[0]?.id || null; sel = null; esel = null; if (open) { side(); paint(); } alert("Pipelines were changed in another tab or by the API. The newest version is loaded now, your last change was not saved."); return r; }
+    if (r.rev != null) D.rev = r.rev;
+    return r;
+  };
+  const save = () => { clearTimeout(tmo); tmo = setTimeout(() => put().catch(() => {}), 400); };
   const snap = () => { hist.push(JSON.stringify(D)); if (hist.length > 80) hist.shift(); };
   const who = (id) => D.crew.find((w) => w.id === id);
   const up = (id) => A.S?.o?.net?.[id] !== false;
@@ -285,10 +291,10 @@
     if (hireFor !== null) tab = "team";
     else if (n || esel != null) tab = "set";
     const hs = (cfg?.hosts || []).filter((h) => h.on_), upn = hs.filter((h) => up(h.id)).length;
-    const team = hireFor !== null ? mid : `<div class="fsec">${D.crew.length ? `<div class="fcl">${D.crew.map((w) => `<div class="cw"><span class="mic" style="--g:${GR.w}">${ic("person")}</span><b>${esc(w.n)}</b><span>${esc(w.r && w.r !== w.n ? w.r : "")}</span><button type="button" class="dng" data-fire="${w.id}">Let go</button></div>`).join("")}</div>` : `<p class="hint">Nobody here yet. Steps need someone who does the work.</p>`}<button type="button" id="fHire">${ic("plus")}Hire someone</button></div>`;
-    const set = f ? (mid || `<div class="fsec"><p class="hint">Click a step to change it. The + on a step adds the next one.</p></div>`) + `<div class="fsec fbot">${(() => { const used = new Set(D.flows.flatMap((x) => x.nodes.map((m) => m.c?.w).filter(Boolean))), st = D.crew.filter((w) => used.has(w.id)).length, dk = A.places ? A.places().length : 0; return st ? `<div class="fmh"><span><i class="dot2 ${dk >= st ? "up" : "dn"}"></i>${dk >= st ? `${st} of ${st} workers have a desk and chair` : `${st - dk} of ${st} workers need a desk and chair`}</span><button type="button" class="lnk" id="fDesk">Edit office</button></div>` : ""; })()}<div class="fmh"><span><i class="dot2 ${upn ? "up" : "dn"}"></i>${upn} of ${hs.length} machines online</span><button type="button" class="lnk" id="fMgr">Manage</button></div><div class="ac"><button type="button" id="fUndo" ${hist.length ? "" : "disabled"}>Undo</button><span class="sp"></span><button type="button" class="dng" id="fRm">Delete pipeline</button></div></div>` : "";
+    const team = hireFor !== null ? mid : `<div class="fsec">${D.crew.length ? `<div class="fcl">${D.crew.map((w) => `<div class="cw"><span class="mic" style="--g:${GR.w}">${ic("person")}</span><b>${esc(w.n)}</b><span>${esc(w.r && w.r !== w.n ? w.r : "")}</span><button type="button" class="dng" data-fire="${w.id}">Remove</button></div>`).join("")}</div>` : `<p class="hint">Nobody here yet. Steps need someone who does the work.</p>`}<button type="button" id="fHire">${ic("plus")}Hire someone</button></div>`;
+    const set = f ? (mid || `<div class="fsec"><p class="hint">Click a step to change it. The + on a step adds the next one.</p></div>`) + `<div class="fsec fbot">${(() => { const used = new Set(D.flows.filter((x) => x.on).flatMap((x) => x.nodes.map((m) => m.c?.w).filter(Boolean))), st = D.crew.filter((w) => used.has(w.id)).length, dk = A.places ? A.places().length : 0; return st ? `<div class="fmh"><span><i class="dot2 ${dk >= st ? "up" : "dn"}"></i>${dk >= st ? `${st} of ${st} workers have a desk and chair` : `${st - dk} of ${st} workers need a desk and chair`}</span><button type="button" class="lnk" id="fDesk">Edit office</button></div>` : ""; })()}<div class="fmh"><span><i class="dot2 ${upn ? "up" : "dn"}"></i>${upn} of ${hs.length} machines online</span><button type="button" class="lnk" id="fMgr">Manage</button></div><div class="ac"><button type="button" id="fUndo" ${hist.length ? "" : "disabled"}>Undo</button><span class="sp"></span><button type="button" class="dng" id="fRm">Delete pipeline</button></div></div>` : "";
     $("fB").innerHTML = `<select id="fSel" aria-label="Pipeline">${D.flows.map((x) => `<option value="${x.id}" ${x.id === cur ? "selected" : ""}>${esc(x.n)}</option>`).join("")}</select><button type="button" id="fNew">${ic("plus")}New</button>
-      ${f ? `<input type="text" id="fName" value="${esc(f.n)}" maxlength="60" aria-label="Name"><span class="sp"></span><button type="button" class="sw ${f.on ? "on" : ""}" id="fOn" role="switch" aria-checked="${f.on}" title="On: schedules and GitHub triggers start this pipeline by themselves"><i></i>${f.on ? "On" : "Off"}</button><button type="button" class="go fRun" id="fRun" ${f.nodes.some((n) => n.t.startsWith("t.")) ? "" : "disabled"}>${ic("play")}Run now</button>` : ""}`;
+      ${f ? `${ren ? `<input type="text" id="fName" value="${esc(f.n)}" maxlength="60" aria-label="Pipeline name">` : `<button type="button" id="fRen" title="Rename this pipeline">Rename</button>`}<span class="sp"></span><button type="button" class="sw ${f.on ? "on" : ""}" id="fOn" role="switch" aria-checked="${f.on}" title="On: schedules and GitHub triggers start this pipeline by themselves"><i></i>${f.on ? "On" : "Off"}</button><button type="button" class="go fRun" id="fRun" ${f.nodes.some((n) => n.t.startsWith("t.")) ? "" : "disabled"}>${ic("play")}Run now</button>` : ""}`;
     S.innerHTML = `<div class="seg ftb" role="tablist">${[["set", n ? "Step" : esel != null ? "Line" : "Settings"], ["runs", "Runs"], ["team", `Team${D.crew.length ? ` <span>${D.crew.length}</span>` : ""}`]].map(([k, l]) => `<button type="button" role="tab" data-ft="${k}" class="${tab === k ? "on" : ""}" aria-selected="${tab === k}">${l}</button>`).join("")}</div>
       ${tab === "set" ? set : tab === "runs" ? `<div class="fsec"><div id="fRuns" class="fruns"><p class="hint">Loading…</p></div></div>` : team}`;
     bind();
@@ -304,18 +310,20 @@
     for (const b of el.querySelectorAll("[data-run]")) b.onclick = () => A.runView && A.runView(+b.dataset.run);
     if (rs.some((r) => ["queued", "run"].includes(r.st))) rT = setTimeout(runs, 3000);
   };
-  const newFlow = () => { snap(); const id = uid("p", D.flows); D.flows.push({ id, n: "My pipeline " + (D.flows.length + 1), on: false, nodes: [], edges: [] }); cur = id; sel = null; save(); side(); paint(); };
+  const newFlow = (ask) => { const nm = ask === true ? prompt("Name of the new pipeline", "My pipeline " + (D.flows.length + 1)) : "My pipeline " + (D.flows.length + 1); if (nm === null) return; snap(); const id = uid("p", D.flows); D.flows.push({ id, n: (nm || "").trim().slice(0, 60) || "My pipeline " + (D.flows.length + 1), on: false, nodes: [], edges: [] }); cur = id; sel = null; save(); side(); paint(); };
   const bind = () => {
     const f = fl(), on = (id, ev, fn) => { const e = $(id); if (e) e[ev] = fn; };
     const n = f && sel ? f.nodes.find((m) => m.id === sel) : null;
     on("fRun", "onclick", async () => {
-      clearTimeout(tmo); await post({ flows: D.flows, crew: D.crew }, "/api/flows");
+      const ws = [...new Set(f.nodes.map((m) => m.c?.w).filter(Boolean))], miss = A.unseated ? A.unseated(ws) : [];
+      if (miss.length && !confirm(`${miss.map((id) => (who(id) || {}).n || id).join(", ")} ${miss.length === 1 ? "has" : "have"} no desk with a chair yet. Start anyway? The run waits until there is one.`)) return;
+      clearTimeout(tmo); await put();
       const r = await fetch(`/api/v2/flows/${encodeURIComponent(f.id)}/run`, { method: "POST", headers: { "content-type": "application/json", "x-ao": "1" }, body: "{}" }).then((x) => x.json());
       if (r.run) { tab = "runs"; sel = null; esel = null; side(); paint(); A.runView && A.runView(r.run); } else if (r.error) alert(r.error);
     });
     if (f) runs();
     const hop = async (op) => {
-      clearTimeout(tmo); await post({ flows: D.flows, crew: D.crew }, "/api/flows");
+      clearTimeout(tmo); await put();
       const r = await post({ op, flow: cur, node: sel }, "/api/flows/hook");
       if (r.error) return alert(r.error);
       D.hooks = r.hooks;
@@ -327,8 +335,11 @@
     on("hkN", "onclick", (e) => { if (e.target.textContent.startsWith("Replace") && e.target.dataset.sure !== "1") { e.target.dataset.sure = "1"; e.target.textContent = "Click again, the old link stops working"; return; } hop("new"); });
     on("hkD", "onclick", (e) => { if (e.target.dataset.sure !== "1") { e.target.dataset.sure = "1"; e.target.textContent = "Click again to revoke"; return; } hop("del"); });
     on("fSel", "onchange", (e) => { cur = e.target.value; sel = null; esel = null; hideMenu(); side(); paint(); fit(); });
-    on("fNew", "onclick", newFlow);
-    on("fName", "onchange", (e) => { f.n = e.target.value.trim() || "Untitled"; save(); side(); });
+    on("fNew", "onclick", () => newFlow(true));
+    on("fName", "onchange", (e) => { f.n = e.target.value.trim() || "Untitled"; ren = false; save(); side(); });
+    on("fName", "onkeydown", (e) => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { ren = false; side(); } });
+    on("fName", "onblur", () => { if (ren) { ren = false; side(); } });
+    on("fRen", "onclick", () => { ren = true; side(); const i = $("fName"); i.focus(); i.select(); });
     on("fOn", "onclick", () => { f.on = !f.on; save(); side(); });
     on("fRm", "onclick", () => { if (!confirm(`Delete ${f.n}?`)) return; snap(); D.flows = D.flows.filter((x) => x !== f); if (!D.flows.length) newFlow(); cur = D.flows[0].id; sel = null; save(); side(); paint(); fit(); });
     on("fUndo", "onclick", undo);
@@ -350,7 +361,7 @@
     for (const b of $("fS").querySelectorAll("[data-ft]")) b.onclick = () => { tab = b.dataset.ft; sel = null; esel = null; hireFor = null; custom = false; hideMenu(); side(); paint(); };
     for (const b of $("fS").querySelectorAll("[data-cron]")) b.onclick = () => { snap(); n.c.cron = b.dataset.cron; save(); paint(); side(); };
     for (const b of $("fS").querySelectorAll("[data-newfor]")) b.onclick = () => { hireFor = b.dataset.newfor; side(); $("fHf")?.n.focus(); };
-    for (const b of $("fS").querySelectorAll("[data-fire]")) b.onclick = () => { const w = who(b.dataset.fire); if (!confirm(`Let ${w.n} go?`)) return; snap(); D.crew = D.crew.filter((x) => x !== w); save(); side(); paint(); };
+    for (const b of $("fS").querySelectorAll("[data-fire]")) b.onclick = () => { const w = who(b.dataset.fire); if (!confirm(`Remove ${w.n} from the team?`)) return; snap(); D.crew = D.crew.filter((x) => x !== w); save(); side(); paint(); };
     const F = $("fHf");
     if (F) F.onsubmit = (e) => {
       e.preventDefault(); const nm = F.n.value.trim(); if (!nm) return; snap();
@@ -365,7 +376,7 @@
     else if ((e.key === "Delete" || e.key === "Backspace") && esel != null) { e.preventDefault(); const f = fl(); snap(); f.edges.splice(esel, 1); esel = null; save(); paint(); side(); }
     else if (e.key === "Escape") { e.stopPropagation(); if (menu || sel || esel != null || hireFor !== null) { hideMenu(); sel = null; esel = null; hireFor = null; side(); paint(); } else close(); }
   };
-  const close = () => { if (A.route && A.route() === "pipelines") { location.hash = "#/office"; return; } open = false; clearTimeout(tmo); post({ flows: D.flows, crew: D.crew }, "/api/flows").catch(() => {}); document.body.classList.remove("fed"); R.hidden = true; document.removeEventListener("keydown", key, true); window.removeEventListener("resize", lines); };
+  const close = () => { if (A.route && A.route() === "pipelines") { location.hash = "#/office"; return; } open = false; clearTimeout(tmo); put().catch(() => {}); document.body.classList.remove("fed"); R.hidden = true; document.removeEventListener("keydown", key, true); window.removeEventListener("resize", lines); };
   A.flowPick = (id) => { if (!open || !D.flows.some((x) => x.id === id)) return; cur = id; sel = null; esel = null; hideMenu(); side(); paint(); fit(); };
   A.flows = async () => {
     if (open) return close();
