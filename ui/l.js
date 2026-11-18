@@ -1,8 +1,8 @@
 (() => {
   const A = window.AO, { get, post, esc, $ } = A;
   const SRC = { tiles: "Workers", stage: "Office", queue: "Queue", prs: "Pull requests", log: "Log", approvals: "Waiting for you", costs: "Costs", machines: "Machines", pipelines: "Pipelines", team: "Team", merges: "Merges", repohealth: "Repositories" };
-  const CL = { tiles: { x: 0, y: 0, w: 100, h: 6 }, stage: { x: 0, y: 6, w: 72, h: 94 }, queue: { x: 72, y: 6, w: 28, h: 36 }, prs: { x: 72, y: 42, w: 28, h: 29 }, log: { x: 72, y: 71, w: 28, h: 29 }, approvals: { x: 51, y: 13, w: 20, h: 30 }, costs: { x: 51, y: 43, w: 20, h: 25 }, machines: { x: 51, y: 68, w: 20, h: 32 }, pipelines: { x: 30, y: 13, w: 21, h: 30 }, team: { x: 30, y: 43, w: 21, h: 30 }, merges: { x: 30, y: 73, w: 21, h: 27 }, repohealth: { x: 0, y: 60, w: 30, h: 40 } };
-  const OLS = [{ tiles: [0, 0, 100, 13], stage: [0, 13, 71, 87], queue: [71, 13, 29, 34], prs: [71, 47, 29, 29], log: [71, 76, 29, 24] }, { tiles: [0, 0, 100, 8], stage: [0, 8, 57, 56], queue: [57, 8, 43, 52], prs: [57, 60, 43, 40], log: [0, 64, 57, 36] }, { tiles: [0, 0, 100, 6], stage: [0, 6, 57, 58], queue: [57, 6, 43, 54], prs: [57, 60, 43, 40], log: [0, 64, 57, 36] }, { tiles: [0, 0, 100, 6], stage: [0, 6, 67, 66], queue: [67, 6, 33, 56], prs: [67, 62, 33, 38], log: [0, 72, 67, 28] }];
+  const CL = { tiles: { x: 0, y: 0, w: 100, h: 6 }, stage: { x: 0, y: 6, w: 72, h: 94 }, queue: { x: 72, y: 6, w: 28, h: 30 }, prs: { x: 72, y: 36, w: 28, h: 26 }, log: { x: 72, y: 62, w: 28, h: 38 }, approvals: { x: 51, y: 13, w: 20, h: 30 }, costs: { x: 51, y: 43, w: 20, h: 25 }, machines: { x: 51, y: 68, w: 20, h: 32 }, pipelines: { x: 30, y: 13, w: 21, h: 30 }, team: { x: 30, y: 43, w: 21, h: 30 }, merges: { x: 30, y: 73, w: 21, h: 27 }, repohealth: { x: 0, y: 60, w: 30, h: 40 } };
+  const OLS = [{ tiles: [0, 0, 100, 13], stage: [0, 13, 71, 87], queue: [71, 13, 29, 34], prs: [71, 47, 29, 29], log: [71, 76, 29, 24] }, { tiles: [0, 0, 100, 8], stage: [0, 8, 57, 56], queue: [57, 8, 43, 52], prs: [57, 60, 43, 40], log: [0, 64, 57, 36] }, { tiles: [0, 0, 100, 6], stage: [0, 6, 57, 58], queue: [57, 6, 43, 54], prs: [57, 60, 43, 40], log: [0, 64, 57, 36] }, { tiles: [0, 0, 100, 6], stage: [0, 6, 67, 66], queue: [67, 6, 33, 56], prs: [67, 62, 33, 38], log: [0, 72, 67, 28] }, { tiles: [0, 0, 100, 6], stage: [0, 6, 72, 94], queue: [72, 6, 28, 36], prs: [72, 42, 28, 29], log: [72, 71, 28, 29] }];
   const BASE = ["tiles", "stage", "queue", "prs", "log"];
   const IC = {
     eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
@@ -18,6 +18,10 @@
   const el = (k) => document.querySelector(`[data-lp="${k}"]`);
   const sc = () => L.scenes.find((s) => s.id === L.cur);
   const fresh = (id, n) => ({ id, n, items: Object.fromEntries(Object.entries(CL).map(([k, v], i) => [k, { ...v, v: BASE.includes(k), z: i + 1, lk: false }])) });
+  // The office is the point of the page: another panel may touch it, but not cover a real part of it.
+  const ovl = (a, b) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+  // Share of the office panel hidden by panels drawn above it (only overlaps beyond a 15% sliver count).
+  const covered = (it, ks = Object.keys(it)) => it.stage?.v ? ks.filter((k) => k !== "stage" && it[k]?.v && ovl(it[k], it.stage) > 0.15 * Math.min(it[k].w * it[k].h, it.stage.w * it.stage.h)).reduce((a, k) => a + ovl(it[k], it.stage), 0) / (it.stage.w * it.stage.h) : 0;
   const norm = (x) => {
     const o = { cur: "classic", scenes: [] };
     for (const s of Array.isArray(x?.scenes) ? x.scenes : []) {
@@ -25,6 +29,8 @@
       const it = {};
       for (const k of Object.keys(SRC)) { const v = s.items?.[k] || { ...CL[k], v: BASE.includes(k) }; it[k] = { x: +v.x || 0, y: +v.y || 0, w: +v.w || 20, h: +v.h || 20, v: v.v !== false, z: +v.z || 1, lk: !!v.lk }; }
       if (OLS.some((OL) => BASE.every((k) => OL[k].every((n, i) => it[k][["x", "y", "w", "h"][i]] === n)))) for (const k of BASE) Object.assign(it[k], CL[k]);
+      // A saved scene where a panel covers the office (e.g. the office dragged onto the right column) gets the default places back.
+      if (covered(it, BASE) && !BASE.some((k) => it[k].lk)) for (const k of BASE) Object.assign(it[k], CL[k]);
       o.scenes.push({ id: s.id, n: String(s.n || "Scene").slice(0, 40), items: it });
     }
     o.cur = o.scenes.some((s) => s.id === x?.cur) ? x.cur : "classic";
@@ -54,13 +60,54 @@
     for (const k of Object.keys(SRC)) {
       const e = el(k); if (!e) continue;
       if (!s) { e.style.cssText = ""; e.classList.remove("lph"); continue; }
-      const v = s.items[k];
+      const v = s.items[k]; delete e.dataset.fit;
       e.style.left = `calc(${v.x}% + 5px)`; e.style.top = `calc(${v.y}% + 5px)`; e.style.width = `calc(${v.w}% - 10px)`; e.style.height = `calc(${v.h}% - 10px)`; e.style.zIndex = v.z;
       e.classList.toggle("lph", !v.v);
     }
     window.dispatchEvent(new Event("resize"));
-    if (edit) overlays();
+    if (edit) overlays(); else fit();
   };
+  // Panels stacked in one column share its height: one whose contents need less than its saved size (an empty
+  // queue, a short PR list) shrinks to fit and the others get the rest, in their saved proportions.
+  // Only the drawing changes; saved sizes and edit mode keep the real values.
+  const near = (a, b) => Math.abs(a - b) < 1.5;
+  const fit = () => {
+    const s = L && sc(); if (!s || edit) return;
+    const H = lay.getBoundingClientRect().height; if (!H) return;
+    const vs = Object.entries(s.items).filter(([, v]) => v.v).sort((a, b) => a[1].y - b[1].y), seen = new Set();
+    let st = false;
+    for (const [k, v] of vs) {
+      if (seen.has(k)) continue;
+      const ch = [[k, v]];
+      for (;;) {
+        const t = ch[ch.length - 1][1];
+        const n = vs.find(([k2, w]) => !seen.has(k2) && !ch.some(([c]) => c === k2) && near(w.x, v.x) && near(w.w, v.w) && near(w.y, t.y + t.h));
+        if (!n) break; ch.push(n);
+      }
+      ch.forEach(([c]) => seen.add(c));
+      if (ch.length < 2) continue;
+      const mt = ch.map(([c, w]) => {
+        const e = el(c); if (!e || w.lk) return null;
+        const o = e.style.height; e.style.height = "auto"; const h = (Math.ceil(e.getBoundingClientRect().height) + 12) / H * 100; e.style.height = o; return h < w.h - 1 ? h : null;
+      });
+      const rest = ch.reduce((a, [, w], i) => a + (mt[i] === null ? w.h : 0), 0);
+      const tot = ch.reduce((a, [, w]) => a + w.h, 0), fix = mt.reduce((a, m) => a + (m ?? 0), 0);
+      let y = ch[0][1].y;
+      ch.forEach(([c, w], i) => {
+        // Nothing to give the space to (all empty): keep the saved sizes.
+        const h = !rest ? w.h : mt[i] ?? w.h * (tot - fix) / rest, e = el(c);
+        const top = `calc(${y}% + 5px)`, ht = `calc(${h}% - 10px)`;
+        if (e && e.dataset.fit !== top + ht) { e.dataset.fit = top + ht; e.style.top = top; e.style.height = ht; if (c === "stage") st = true; }
+        y += h;
+      });
+    }
+    if (st) window.dispatchEvent(new Event("resize"));
+  };
+  let fq = 0;
+  const refit = () => { if (!fq) fq = requestAnimationFrame(() => { fq = 0; fit(); }); };
+  const mo = new MutationObserver(refit);
+  document.querySelectorAll("#lay .lp .bd").forEach((d) => mo.observe(d, { childList: true }));
+  window.addEventListener("resize", refit);
 
   const overlays = () => {
     lay.querySelectorAll(".lo,.lgr").forEach((x) => x.remove());
@@ -89,6 +136,7 @@
     const sn = (val, keys) => { let best = Math.round(val), bd = 1.2; for (const t of keys) { const d = Math.abs(t - val); if (d < bd) { bd = d; best = t; } } return best; };
     const xs = [0, 100, ...others.flatMap((w) => [w.x, w.x + w.w])], ys = [0, 100, ...others.flatMap((w) => [w.y, w.y + w.h])];
     let moved = false;
+    const cov0 = covered(s.items);
     const mv = (ev) => {
       const dx = (ev.clientX - sx) / r.width * 100, dy = (ev.clientY - sy) / r.height * 100;
       if (!moved) { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 3) return; snap(); moved = true; }
@@ -107,7 +155,13 @@
       }
       apply();
     };
-    const up = () => { window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up); if (moved) { save(); dock(); } };
+    const up = () => {
+      window.removeEventListener("pointermove", mv); window.removeEventListener("pointerup", up);
+      if (!moved) return;
+      // Undo a move or resize that would bury the office under another panel.
+      if (covered(s.items) > cov0 + 0.001) { Object.assign(v, o0); hist.pop(); apply(); const o = lay.querySelector(`.lo[data-k="${k}"]`); if (o) { o.classList.add("no"); setTimeout(() => o.classList.remove("no"), 600); } return; }
+      save(); dock();
+    };
     window.addEventListener("pointermove", mv); window.addEventListener("pointerup", up);
   };
 

@@ -33,6 +33,11 @@
   window.addEventListener("hashchange", go);
   try { B.classList.toggle("nvs", localStorage.getItem("ao.nv") === "1"); } catch {}
   $("nvC").onclick = () => { const on = B.classList.toggle("nvs"); try { localStorage.setItem("ao.nv", on ? "1" : "0"); } catch {} setTimeout(() => window.dispatchEvent(new Event("resize")), 200); };
+  const nvOpen = (on) => { B.classList.toggle("nvo", on); $("nvM").setAttribute("aria-expanded", String(on)); };
+  $("nvM").onclick = () => nvOpen(!B.classList.contains("nvo"));
+  $("nav").addEventListener("click", (e) => { if (e.target.closest("a")) nvOpen(false); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && B.classList.contains("nvo")) nvOpen(false); });
+  window.addEventListener("hashchange", () => nvOpen(false));
   const prev = A.onState;
   A.onState = (s) => {
     prev && prev(s);

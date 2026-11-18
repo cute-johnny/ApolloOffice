@@ -55,6 +55,7 @@
   window.AO.DWARN = DWARN;
   window.AO.DESC = DESC;
   const ORD = ["scout", "guard", "vet", "architect", "watcher", "hunter", "repro", "fixer", "ci", "design_fixer", "tester", "reviewer", "submit"];
+  window.AO.ORD = ORD;
 
   let VW = 400, VH = 259;
 
@@ -175,11 +176,24 @@
     return ps;
   };
   window.AO.places = places;
+  // Built-in workers shown on the floor: the ones that can take work right now.
+  // Paused ones are left out, and the Architect only shows while the front desk is on.
+  const STG = { architect: ["plan"], hunter: ["hunt"], repro: ["repro"], fixer: ["fix"], ci: ["ci"], design_fixer: ["design"], tester: ["test"], reviewer: ["review"], submit: ["gate", "submit"] };
+  const bstat = (n) => {
+    const w = S?.w?.[n] || {}, q = S?.q || [];
+    const cn = STG[n] ? q.filter((j) => STG[n].includes(j.st)).length : n === "vet" ? S?.o?.vn || 0 : 0;
+    const job = (w.job && q.find((j) => j.id === w.job)) || (STG[n] && q.find((j) => STG[n].includes(j.st))) || null;
+    return { cn, wk: cn > 0 || w.st === "work", job };
+  };
+  const crowd = () => ORD.filter((n) => S?.w?.[n] && !S.w[n].hold && (n !== "architect" || S.orch));
+  // Hired staff take desks first, as the backend counts them (eng::seated); built-ins only
+  // get the desks that are left and never count toward any limit.
   const seats = () => {
     const st = (S?.staff || []).filter((id) => (S?.crew || []).some((w) => w.id === id)), ps = places();
-    const m = new Map();
+    const m = new Map(), b = new Map(), bs = crowd(), left = ps.slice(st.length);
     st.forEach((id, i) => { if (ps[i]) m.set(ps[i].k, { id, back: ps[i].back }); });
-    return { m, wait: st.slice(ps.length), ids: new Set(st.slice(0, ps.length)) };
+    bs.forEach((n, i) => { if (left[i]) b.set(left[i].k, { n, back: left[i].back }); });
+    return { m, b, wait: st.slice(ps.length), bwait: bs.slice(left.length), ids: new Set(st.slice(0, ps.length)) };
   };
   const pst = (id) => {
     const rs = (S?.rn || []).filter((r) => r.w === id);
@@ -187,9 +201,10 @@
     if (S?.o?.man) return "sleep";
     return "idle";
   };
-  const person = (id, x, y, t, sit, back) => {
-    const k = "c:" + id, s0 = SK[k] || { body: "#8d9199", dark: "#62666d", light: "#b9bcc2" }, sk = back ? { ...s0, eye: s0.body } : s0;
-    const st = sit ? pst(id) : "wait", sd = id.length * 1.7 + id.charCodeAt(0) * 0.13;
+  const person = (id, x, y, t, sit, back, bi) => {
+    const k = bi ? id : "c:" + id, s0 = SK[k] || { body: "#8d9199", dark: "#62666d", light: "#b9bcc2" }, sk = back ? { ...s0, eye: s0.body } : s0;
+    const bt = bi ? bstat(id) : null;
+    const st = bi ? (S?.o?.man ? "sleep" : bt.wk ? "work" : "idle") : sit ? pst(id) : "wait", sd = id.length * 1.7 + id.charCodeAt(0) * 0.13;
     const p = K.pose();
     p.legs = sit ? "sit" : "stand";
     const bl = Math.floor((t + sd) * 10) % 47 === 0;
@@ -210,7 +225,7 @@
     fc.clearRect(0, 0, K.W, K.H);
     K.figure(fc, p, t, sk);
     c.drawImage(fig, Math.round(x - 24), Math.round(y - 41));
-    hits.push({ k: "p:" + id, b: [x - 9, y - 30, x + 9, y - 4], p: id });
+    hits.push(bi ? { k: "w:" + id, b: [x - 9, y - 30, x + 9, y - 4], n: id, q: bt.job } : { k: "p:" + id, b: [x - 9, y - 30, x + 9, y - 4], p: id });
     if (st === "sleep") { const z = ((t + sd) * 0.6) % 1; c.globalAlpha = 1 - z; tx("Z", x + 8 + z * 4, y - 26 - z * 8, "#75746f"); c.globalAlpha = 1; }
     if (st === "wait") tx("?", x + 9, y - 18 + (Math.floor(t * 2 + sd) % 2), "#e0675a");
   };
@@ -218,17 +233,26 @@
   const fdraw = (t) => {
     const ord = FU.map((u, k) => [u, k]).sort((a, b) => fl(a[0].i) - fl(b[0].i) || a[0].y + FC[a[0].i].h - (b[0].y + FC[b[0].i].h));
     const hk = fedit && !fdrag && !ftool ? pick(fhov) : -1;
-    const sm = fedit ? { m: new Map(), wait: [] } : seats();
+    const sm = fedit ? { m: new Map(), b: new Map(), wait: [], bwait: [] } : seats();
     for (const [u, k] of ord) {
       if (fdrag && fdrag.k === k) continue;
       FU[k] && FC[u.i].d(u.x * 8, GO + u.y * 8, t);
       if (sm.m.has(k)) person(sm.m.get(k).id, u.x * 8 + 8, GO + u.y * 8 + 14, t, true, sm.m.get(k).back);
+      else if (sm.b.has(k)) person(sm.b.get(k).n, u.x * 8 + 8, GO + u.y * 8 + 14, t, true, sm.b.get(k).back, true);
 
       if (fedit && k === fsel) box(u, "#4fb3e0", 0.95);
       else if (k === hk) box(u, lt() ? "#000" : "#fff", 0.35);
     }
     for (const [k, { id, back }] of sm.m) { const u = FU[k]; if (!u || (fdrag && fdrag.k === k)) continue; const nm = pname(id), on = pst(id) === "work"; tx(nm, u.x * 8 + 8 - (K.textWidth(nm) >> 1), GO + u.y * 8 + (back ? 18 : -6), on ? hl("c:" + id) : "#6b6f76"); }
+    for (const [k, { n, back }] of sm.b) { const u = FU[k]; if (!u || (fdrag && fdrag.k === k)) continue; const nm = NM[n].slice(0, 10).toUpperCase(); tx(nm, u.x * 8 + 8 - (K.textWidth(nm) >> 1), GO + u.y * 8 + (back ? 18 : -6), bstat(n).wk ? hl(n) : "#6b6f76"); }
     sm.wait.forEach((id, i) => { const x = 20 + i * 24, y = VH - 8; person(id, x, y, t, false); const nm = pname(id); tx(nm, x - (K.textWidth(nm) >> 1), y - 26, "#e0675a"); });
+    // Built-ins without a desk stand together in the bottom-right corner; the strip and tooltips still work.
+    sm.bwait.forEach((n, i) => { const x = VW - 20 - i * 24, y = VH - 8; if (x < 20 + sm.wait.length * 24) return; person(n, x, y, t, false, false, true); const nm = NM[n].slice(0, 10).toUpperCase(); tx(nm, x - (K.textWidth(nm) >> 1), y - 26 - (i % 2) * 9, bstat(n).wk ? hl(n) : "#6b6f76"); });
+    if (!fedit && !places().length) {
+      const a = "NO DESKS YET", b2 = "EDIT OFFICE: ADD A DESK WITH A CHAIR", cx0 = VW >> 1, cy0 = GO + ((VH - GO) >> 1) - 12;
+      tx(a, cx0 - (K.textWidth(a) >> 1), cy0, lt() ? "#4c515b" : "#9a9ea6");
+      tx(b2, cx0 - (K.textWidth(b2) >> 1), cy0 + 10, "#6b6f76");
+    }
     const g = ghost();
     fbad = false;
     if (g) {
@@ -317,6 +341,8 @@
     redo: () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, shiftKey: true })),
     del: () => del(fsel),
     clear: () => { snap(); FU = []; fsel = -1; commit(); },
+    // Grows the room to the starter size but never shrinks it, so Undo (furniture only) still fits.
+    starter: () => { const o = window.AO.starter; if (!o) return; snap(); window.AO.furn.load(o.items); fsel = -1; window.AO.furn.size(Math.max(GX, o.size.w), Math.max(GY, o.size.h)); commit(); },
     room: () => ({ w: GX, h: GY, min: ext() }),
     size: (w, h) => { const [mw, mh] = ext(); w = Math.max(30, mw, Math.min(80, w | 0)); h = Math.max(16, mh, Math.min(40, h | 0)); room(w, h); clearTimeout(rsave); rsave = setTimeout(() => post({ office: { size: { w, h } } }, "/api/set").catch(() => {}), 400); return { w, h }; },
     loadRoom: (z) => { const w = z?.w | 0, h = z?.h | 0; room(w >= 30 && w <= 80 ? w : 50, h >= 16 && h <= 40 ? h : 28); },
@@ -404,7 +430,8 @@
   };
 
   let last = performance.now();
-  let sgw = 0, sgh = 0, lf = 0;
+  let sgw = 0, sgh = 0, lf = 0, bk = "";
+  const bg = document.createElement("canvas"); bg.id = "cvb"; bg.setAttribute("aria-hidden", "true"); cv.before(bg);
   new ResizeObserver(([e]) => { sgw = e.contentRect.width; sgh = e.contentRect.height; }).observe($("stage"));
   const frame = (now) => {
     requestAnimationFrame(frame);
@@ -425,11 +452,25 @@
     }
     if (S?.o?.off) { c.globalAlpha = 0.25; px(0, 35, VW, VH - 35, "#000"); c.globalAlpha = 1; }
     const dp = window.devicePixelRatio || 1;
-    const kf = Math.min((sgw - 2) * dp / VW, (sgh - 2) * dp / VH), ks = kf >= 1.25 ? kf : Math.max(1, Math.floor(kf)), sc = Math.max(1, Math.ceil(ks));
+    const kf = Math.min((sgw - 2) * dp / VW, (sgh - 2) * dp / VH), ks = kf >= 1.25 || kf < 1 ? kf : 1, sc = Math.max(1, Math.ceil(ks));
     cv.classList.toggle("soft", ks % 1 > 0.01 && ks < 1.75);
     if (cv.width !== VW * sc || cv.height !== VH * sc) { cv.width = VW * sc; cv.height = VH * sc; }
     const cw = Math.floor(VW * ks / dp) + "px", ch = Math.floor(VH * ks / dp) + "px";
     if (cv.style.width !== cw || cv.style.height !== ch) { cv.style.width = cw; cv.style.height = ch; }
+    {
+      const bw = Math.round(sgw * dp), bh = Math.round(sgh * dp), [ba, bb] = scol("floor"), rw = Math.floor(VW * ks), rh = Math.floor(VH * ks), key = [bw, bh, ba, bb, rw, rh].join();
+      if (bk !== key + lt()) {
+        bk = key + lt();
+        if (bg.width !== bw || bg.height !== bh) { bg.width = bw; bg.height = bh; }
+        const g = bg.getContext("2d"), x0 = (bw - rw) / 2, y0 = (bh - rh) / 2;
+        g.clearRect(0, 0, bw, bh);
+        g.fillStyle = ba; g.fillRect(0, 0, bw, bh);
+        g.fillStyle = lt() ? "rgb(0 0 0 / .12)" : "rgb(0 0 0 / .3)"; g.fillRect(0, 0, bw, bh);
+        const sh = Math.max(6, 14 * dp);
+        g.shadowColor = "rgb(0 0 0 / .7)"; g.shadowBlur = sh; g.fillStyle = bb; g.fillRect(x0, y0, rw, rh);
+        g.shadowBlur = 0; g.strokeStyle = lt() ? "rgb(0 0 0 / .3)" : "rgb(255 255 255 / .22)"; g.lineWidth = Math.max(1, dp); g.strokeRect(x0 - 0.5, y0 - 0.5, rw + 1, rh + 1);
+      }
+    }
     cx.imageSmoothingEnabled = false;
     cx.drawImage(off, 0, 0, VW * sc, VH * sc);
     if (fedit) { cx.globalAlpha = lt() ? 0.06 : 0.05; cx.fillStyle = lt() ? "#000" : "#fff"; for (let x = 0; x <= GX; x++) cx.fillRect(x * 8 * sc, GO * sc, 1, GY * 8 * sc); for (let y = 0; y <= GY; y++) cx.fillRect(0, (GO + y * 8) * sc, VW * sc, 1); cx.globalAlpha = 1; }
@@ -462,7 +503,7 @@
   window.AO.mdn = mdn;
   const XP = ["#c77dba", "#6fa8dc", "#e39b6b", "#7fc8a9", "#b5a3e0", "#e0848f", "#8fb3c9", "#c9b37f"];
   let tkeys = "";
-  const tiles = () => {
+  const tiles0 = () => {
     const el = $("tiles");
     const po = window.AO.pord || [], xk = Object.keys(S.w).filter((k) => k.startsWith("x:")).sort((a, b) => (po.indexOf(a.slice(2)) + 99) % 99 - (po.indexOf(b.slice(2)) + 99) % 99);
     xk.forEach((k, i) => { const c = XP[i % XP.length]; SK[k] = { body: c, dark: c, light: c, tx: txc(c) }; NM[k] = S.w[k].nm || k.slice(2); });
@@ -475,10 +516,9 @@
       el.onclick = (e) => {
         const g = e.target.closest(".gear");
         if (g) { e.stopPropagation(); window.AO.role && window.AO.role(g.closest(".tile").dataset.w); return; }
-        const t = e.target.closest(".tile"); if (t && t.dataset.w.startsWith("c:")) { window.AO.go && window.AO.go("team"); return; } if (t) post({ a: "hold", w: t.dataset.w, on: !(S.w[t.dataset.w] || {}).hold }).then(apply);
+        const t = e.target.closest(".tile"); if (t && t.dataset.w.startsWith("c:")) { window.AO.go && window.AO.go("team"); return; } if (t && t.dataset.w === "architect" && !S.orch && !(S.w.architect || {}).hold) { window.AO.go && window.AO.go("settings"); return; } if (t) post({ a: "hold", w: t.dataset.w, on: !(S.w[t.dataset.w] || {}).hold }).then(apply);
       };
     }
-    const STG = { architect: ["plan"], hunter: ["hunt"], repro: ["repro"], fixer: ["fix"], ci: ["ci"], design_fixer: ["design"], tester: ["test"], reviewer: ["review"], submit: ["gate", "submit"] };
     for (const t of el.children) {
       const n = t.dataset.w;
       if (n.startsWith("c:")) {
@@ -496,8 +536,15 @@
         continue;
       }
       const w = S.w[n] || { st: "idle", say: "", md: "", tk: 0 };
-      const cn = STG[n] ? S.q.filter((q) => STG[n].includes(q.st)).length : n === "vet" ? S.o.vn || 0 : 0;
-      const wk = cn > 0 || w.st === "work";
+      const { cn, wk } = bstat(n);
+      if (n === "architect" && !S.orch && !wk && !w.hold) {
+        // Not paused: the Architect only plans projects, which come from the front desk.
+        t.className = "tile hold"; t.style.order = 2;
+        t.querySelector(".md").textContent = mdn(w.md); t.querySelector(".sy").textContent = "Plans projects from the front desk";
+        t.querySelector(".stt").textContent = "front desk off"; t.querySelector(".ft").textContent = "";
+        t.title = (DESC[n] ? DESC[n] + "\n\n" : "") + "Turn on Settings → General → Front desk to use the Architect.";
+        continue;
+      }
       t.querySelector(".md").textContent = n === "ci" || n === "submit" ? "no model" : mdn(w.md);
       t.querySelector(".md").title = w.md || "";
       const ev = !w.say && (S.ev || []).find((e) => e.w === n);
@@ -509,6 +556,30 @@
       t.title = (DESC[n] ? DESC[n] + "\n\n" : "") + (w.hold ? "click to resume" : "click to pause");
     }
   };
+  // The worker strip scrolls sideways: fade the cut edges and offer "+N" / back buttons.
+  let tnv = null;
+  const tnav = () => {
+    const el = $("tiles");
+    if (!tnv) {
+      tnv = document.createElement("div"); tnv.className = "tnv"; tnv.hidden = true;
+      tnv.innerHTML = '<button type="button" class="tl" aria-label="Scroll workers left">‹</button><button type="button" class="tr" aria-label="Scroll workers right"></button>';
+      el.after(tnv);
+      const by = (d) => el.scrollBy({ left: d * el.clientWidth * 0.8, behavior: "smooth" });
+      tnv.querySelector(".tl").onclick = () => by(-1);
+      tnv.querySelector(".tr").onclick = () => by(1);
+      el.addEventListener("scroll", tnav, { passive: true });
+      new ResizeObserver(tnav).observe(el);
+    }
+    const w = el.clientWidth, over = el.scrollWidth - w > 2, l = over && el.scrollLeft > 2, r = over && el.scrollLeft + w < el.scrollWidth - 2;
+    el.classList.toggle("sl", l); el.classList.toggle("sr", r);
+    tnv.hidden = !w || !over;
+    if (tnv.hidden) return;
+    Object.assign(tnv.style, { left: el.offsetLeft + "px", top: el.offsetTop + "px", width: el.offsetWidth + "px", height: el.offsetHeight + "px", zIndex: (+el.style.zIndex || 0) + 1 });
+    const hid = [...el.children].filter((t) => t.offsetLeft + t.offsetWidth > el.scrollLeft + w + 2).length;
+    tnv.querySelector(".tl").hidden = !l;
+    const b = tnv.querySelector(".tr"); b.hidden = !r; b.textContent = "+" + hid + " ›";
+  };
+  const tiles = () => { tiles0(); tnav(); };
 
   const rn = (j) => (j.repo.split("/")[1] || j.repo) + (j.num ? "#" + j.num : "");
   const sel = new Set();
@@ -739,7 +810,7 @@
     }
     setTimeout(poll, 1000);
   };
-  get("/api/cfg").then((c) => (window.AO.pord = (c?.set?.pipe?.steps || []).map((x) => x.id), window.AO.surf.load(c?.set?.office), window.AO.furn.loadRoom(c?.set?.office?.size), window.AO.furn.load(c?.set?.office?.items))).catch(() => {});
+  get("/api/cfg").then((c) => (window.AO.pord = (c?.set?.pipe?.steps || []).map((x) => x.id), window.AO.starter = c?.starter, window.AO.surf.load(c?.set?.office), window.AO.furn.loadRoom(c?.set?.office?.size), window.AO.furn.load(c?.set?.office?.items))).catch(() => {});
   poll();
   live();
   requestAnimationFrame(frame);

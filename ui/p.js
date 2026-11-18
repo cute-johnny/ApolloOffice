@@ -643,30 +643,153 @@ let nq = null;
   };
   A.job = job;
 
+
+  // Setup progress bar (research: determinate, labelled steps, left-moving ripple that slows near the end,
+  // constant-pace trickle that never passes the server's ceiling, smoothed ETA, tips, a clear finish, reduced motion).
+  const TIPS = [
+    "Each job runs in its own container, so a build cannot touch your files.",
+    "This happens once. Later jobs reuse the image and start in seconds.",
+    "The image already has Rust, Node 24, Python, Go and Chromium, so most repositories build without extra setup.",
+    "CPU and memory limits keep your computer responsive while workers build.",
+  ];
+  const MILES = [["check", "Docker"], ["pull", "Base images"], ["tools", "Packages and tools"], ["start", "Sandbox"]];
+  const dur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)), m = Math.floor(s / 60); return m ? `${m} min ${s % 60} s` : `${s} s`; };
+  const setupBar = (host, onEnd) => {
+    const rm = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    host.hidden = false;
+    host.innerHTML = `<div class="spb" role="progressbar" aria-label="Setting up this computer" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div class="spb-hd"><b class="spb-l">Checking Docker</b><span class="spb-p">0%</span></div>
+      <div class="spb-tr"><div class="spb-f"></div></div>
+      <div class="spb-ft"><span class="spb-d"></span><span class="spb-t"></span></div>
+      <ol class="spb-m">${MILES.map(([k, l]) => `<li data-m="${k}">${l}</li>`).join("")}</ol>
+      <div class="spb-tip" aria-live="off">${esc(TIPS[0])}</div></div>`;
+    const q = (c) => host.querySelector(c), bar = q(".spb"), fill = q(".spb-f");
+    let v = { phase: "check", lo: 0, hi: 3, el: 0 }, at = Date.now(), shown = 0, rate = null, eta = null, tip = 0, end = false, txt = {};
+    const set = (c, t) => { if (txt[c] !== t) { txt[c] = t; q(c).textContent = t; } };
+    const el = () => (v.el || 0) + (Date.now() - at);
+    const mile = () => v.phase === "check" ? 0 : v.phase === "start" ? 3 : v.phase === "build" ? (v.k > 1 || (v.n === 0) ? 2 : 1) : 4;
+    const draw = () => {
+      if (!host.isConnected) return stop();
+      if (!end) {
+        // Real progress first; between polls move at the observed pace, easing off only near the step's end.
+        const cap = v.lo + (v.hi - v.lo) * 0.92, band = Math.max(v.hi - v.lo, 0.5);
+        if (shown < v.lo) shown = v.lo;
+        else if (shown < cap) shown = Math.min(cap, shown + (rate ?? 0.25) * 0.25 * Math.min(1, Math.max(0.15, (cap - shown) / (band * 0.3))));
+      }
+      const p = Math.min(100, shown);
+      fill.style.transform = `scaleX(${p / 100})`;
+      fill.style.setProperty("--rip", p > 85 ? "2.4s" : "1.2s");
+      const pr = Math.floor(p);
+      set(".spb-p", `${pr}%`);
+      bar.setAttribute("aria-valuenow", pr);
+      if (!end) {
+        const e = el(), left = eta == null ? "" : eta < 60 ? " · less than a minute left" : ` · about ${Math.ceil(eta / 60)} min left`;
+        set(".spb-t", `${dur(e)}${left}`);
+      }
+    };
+    const poll = async () => {
+      const r = await get("/api/setup/progress").catch(() => null);
+      if (!r || end) return;
+      if (r.phase === "idle") return;
+      v = r; at = Date.now();
+      // Smoothed rate in % per second from proven progress; ETA from it, rounded on display.
+      const s = (v.el || 0) / 1000;
+      if (s > 5 && v.lo > 3) { const now = v.lo / s; rate = rate == null ? now : rate * 0.85 + now * 0.15; }
+      eta = rate && s > 15 && v.lo >= 8 && v.phase !== "done" ? (100 - v.lo) / rate : null;
+      if (v.label) { set(".spb-l", v.phase === "build" && v.n ? `${v.label} (${v.k} of ${v.n})` : v.label); bar.setAttribute("aria-valuetext", v.label); }
+      set(".spb-d", v.detail || "");
+      const m = mile();
+      host.querySelectorAll("[data-m]").forEach((li, i) => { li.className = i < m ? "ok" : i === m ? "on" : ""; });
+      if (v.phase === "done" || v.phase === "error") finish(v.phase === "done", v.m);
+    };
+    const tick = setInterval(draw, rm ? 1000 : 250), pt = setInterval(poll, 1000);
+    const tt = setInterval(() => { const t = q(".spb-tip"); if (!t) return; tip = (tip + 1) % TIPS.length; t.classList.add("out"); setTimeout(() => { t.textContent = TIPS[tip]; t.classList.remove("out"); }, rm ? 0 : 300); }, 9000);
+    const stop = () => { clearInterval(tick); clearInterval(pt); clearInterval(tt); };
+    const finish = (ok, m) => {
+      if (end) return; end = true; stop();
+      shown = ok ? 100 : shown; draw();
+      bar.classList.add(ok ? "done" : "fail");
+      set(".spb-l", ok ? "✓ Sandbox ready" : "Setup stopped");
+      set(".spb-t", ok ? `Done in ${dur(el())}` : "");
+      set(".spb-d", ok ? "" : m || "");
+      host.querySelectorAll("[data-m]").forEach((li) => { if (ok) li.className = "ok"; });
+      const t = q(".spb-tip"); if (t) t.remove();
+      onEnd && onEnd(ok);
+    };
+    poll(); draw();
+    return { finish, stop };
+  };
+
   const setup = async () => {
     ck = ck || (await get("/api/check"));
     cfg = await get("/api/cfg");
     show("Set up ApolloOffice", "setup");
-    const row = (k, l) => `<div class="ck" style="margin:4px 0"><b class="${ck[k].ok ? "ok2" : "bad2"}">${ck[k].ok ? "ok" : "missing"}</b> ${l}: ${esc(ck[k].m)}</div>`;
+    const row = (k, l) => `<div class="ck" style="margin:4px 0"><b class="${ck[k].ok ? "ok2" : "bad2"}">${ck[k].ok ? "ok" : ck[k].state && ck[k].state !== "missing" ? "not ready" : "missing"}</b> ${l}: ${esc(ck[k].m)}</div>`;
     const hs = cfg.hosts.length, rs = cfg.repos.length;
-    B.innerHTML = `<div class="sec"><div class="box"><div class="hd2"><b>Quick Auto-Setup</b></div><div class="msg">Sets up this computer with safe Docker isolation and automatic CPU limits.</div><div class="acts"><button class="pri" id="bauto">Auto-Setup This Computer</button><button id="br">Check again</button></div><div class="msg" id="sa"></div><div id="saraw" hidden style="margin-top:8px"><div class="warn">Docker is not running. You can start Docker Desktop (recommended) and click Auto-Setup again, or confirm running builds directly on this computer (less isolated).</div><div class="acts"><button type="button" id="bautoraw">Confirm Direct Local Mode</button></div></div></div></div>
+    B.innerHTML = `<div class="sec"><div class="box"><div class="hd2"><b>Quick Auto-Setup</b></div><div class="msg">Sets up this computer with safe Docker isolation and automatic CPU limits.</div><div class="acts"><button class="pri" id="bauto">Auto-Setup This Computer</button><button id="br">Check again</button></div><div class="msg" id="sa"></div><div id="sprog" hidden></div><div id="saraw" hidden style="margin-top:8px"></div></div></div>
       <div class="sec"><h4>1 · Tools</h4><div class="box">${row("git", "git")}${row("bash", "bash")}${row("gh", "GitHub CLI")}${row("claude", "Claude Code")}${row("docker", "Docker")}</div></div>
       <div class="sec"><h4>2 · Where code is built</h4><div class="box"><div class="ck"><b class="${hs ? "ok2" : "bad2"}">${hs ? "ok" : "todo"}</b> ${hs ? hs + " machine(s)" : "Not configured yet — click Auto-Setup above or Add machine."}</div><div class="acts"><button id="bh">${hs ? "Machines" : "Add machine"}</button></div></div></div>
       <div class="sec"><h4>3 · Repositories</h4><div class="box"><div class="ck"><b class="${rs ? "ok2" : "bad2"}">${rs ? "ok" : "todo"}</b> ${rs ? rs + " repository(s)" : "Add a repository, or let the Front Desk chat create a new private repo when building a new app."}</div><div class="acts"><button id="bp">${rs ? "Repos" : "Add or create repo"}</button></div></div></div>
       <div class="msg">Workers use your own Claude Code login and your own GitHub account. Pull requests wait for your approval unless you change that per repository.</div>`;
+    // Docker is optional: say what is wrong, give the one fix, and keep checking so the user only has to act once.
+    // Polls only the Docker check, one request at a time; a new setup page or a click on "Build without Docker" ends it.
+    let pt = 0, pgen = 0;
+    const unpoll = () => { clearTimeout(pt); pgen++; };
+    const dockHelp = () => {
+      const d = ck.docker || {}, w = $("saraw");
+      w.hidden = false;
+      w.innerHTML = `<div class="warn"><b>${esc(d.m || "Docker is not available.")}</b> Docker keeps each build in a sandbox.</div>
+        ${d.cmd || d.url || d.start ? `<div class="acts">${d.cmd ? `<code id="dfix" style="user-select:all">${esc(d.cmd)}</code><button type="button" id="dcopy">Copy</button>` : ""}${d.url ? `Install it: <a href="${esc(d.url)}" target="_blank" rel="noopener">${esc(d.url)}</a>` : ""}${d.start ? `<button type="button" class="pri" id="dstart">Start Docker</button>` : ""}</div>` : ""}
+        ${d.warn ? `<div class="msg bad2">${esc(d.warn)} <a href="https://docs.docker.com/engine/security/rootless/" target="_blank" rel="noopener">How to set it up</a></div>` : ""}
+        <div class="msg" id="dwait">${esc(d.after || "This page notices when Docker is ready and finishes setup.")}</div>
+        <div class="msg" style="margin-top:8px">Or skip Docker: builds run directly on this computer, with your user's permissions.</div>
+        <div class="acts"><button type="button" id="bautoraw">Build without Docker</button></div>`;
+      $("bautoraw").onclick = () => { unpoll(); runAuto(true); };
+      if ($("dcopy")) $("dcopy").onclick = () => { if (navigator.clipboard) navigator.clipboard.writeText(d.cmd).then(() => { $("dcopy").textContent = "Copied"; }, () => {}); };
+      if ($("dstart")) $("dstart").onclick = async () => { const r = await post({}, "/api/setup/docker").catch((e) => ({ ok: false, m: String(e) })); $("dwait").textContent = r.ok ? "Starting Docker… this can take a minute." : r.m; };
+      unpoll();
+      // A docker group change only takes effect after logging in again, so polling cannot see it.
+      if (d.state === "denied") return;
+      const g = pgen;
+      let n = 0;
+      const tick = async () => {
+        if (g !== pgen || !w.isConnected || ++n > 60) return;
+        const c = await get("/api/check/docker").catch(() => null);
+        if (g !== pgen || !w.isConnected) return;
+        if (c?.ok) { unpoll(); ck = { ...ck, docker: c }; runAuto(false); return; }
+        pt = setTimeout(tick, 3000);
+      };
+      pt = setTimeout(tick, 3000);
+    };
+    const done = (r) => { setup(); setTimeout(() => { if ($("sa")) { $("sa").className = "msg ok2"; $("sa").textContent = `Ready (${r.mode} mode).`; } }, 50); };
+    let going = false;
     const runAuto = async (raw) => {
+      if (going) return;
+      going = true;
+      try { await auto(raw); } finally { going = false; }
+    };
+    const auto = async (raw) => {
       const b = $("bauto"), m = $("sa");
-      busy(b, true, ck?.docker?.ok ? "Setting up Docker (first time may take a few minutes)…" : "Checking…");
+      const bar = !raw && ck?.docker?.ok ? setupBar($("sprog")) : null;
+      busy(b, true, bar ? "Setting up…" : "Checking…");
       m.className = "msg"; m.textContent = ""; $("saraw").hidden = true;
-      const r = await post({ raw: !!raw }, "/api/setup/auto");
-      busy(b, false, "Auto-Setup This Computer");
+      const r = await post({ raw: !!raw }, "/api/setup/auto").catch((e) => ({ ok: false, m: String(e) }));
       if (r.checks) ck = r.checks;
-      if (r.ok) { setup(); setTimeout(() => { if ($("sa")) { $("sa").className = "msg ok2"; $("sa").textContent = `Ready (${r.mode} mode).`; } }, 50); return; }
-      if (r.needs_docker_or_raw) { $("saraw").hidden = false; m.className = "msg bad2"; m.textContent = r.m || ""; return; }
+      if (bar) {
+        if (r.needs_docker_or_raw) { bar.stop(); $("sprog").hidden = true; }
+        else { bar.finish(!!r.ok, r.m); if (r.ok) { setTimeout(() => done(r), 1600); return; } }
+      }
+      busy(b, false, "Auto-Setup This Computer");
+      if (r.ok) { done(r); return; }
+      if (r.needs_docker_or_raw) { dockHelp(); return; }
       m.className = "msg bad2"; m.textContent = r.error || r.m || "Setup failed.";
     };
+    get("/api/setup/progress").then((p) => {
+      if (!["check", "build", "start"].includes(p?.phase) || !$("sprog") || !$("sprog").hidden) return;
+      busy($("bauto"), true, "Setting up…");
+      setupBar($("sprog"), async (ok) => { if (ok) { ck = await get("/api/check"); setTimeout(() => done({ mode: "docker" }), 1600); } else busy($("bauto"), false, "Auto-Setup This Computer"); });
+    }).catch(() => {});
     $("bauto").onclick = () => runAuto(false);
-    $("bautoraw").onclick = () => runAuto(true);
     $("br").onclick = async () => { ck = await get("/api/check"); setup(); };
     $("bh").onclick = hosts;
     $("bp").onclick = repos;
@@ -697,6 +820,7 @@ let nq = null;
         <h5><span>Furniture</span></h5>
         <div class="pg fu">${Object.entries(U.cat).map(([k, f]) => `<button type="button" data-f="${k}" class="${cu.tool === k ? "on" : ""}"><canvas width="96" height="60"></canvas>${f.n}</button>`).join("")}</div>
         <div class="ac"><button type="button" id="czU" ${cu.undo ? "" : "disabled"} title="Ctrl+Z">Undo</button><button type="button" id="czRd" ${cu.redo ? "" : "disabled"} title="Ctrl+Shift+Z">Redo</button><span class="sp"></span><button type="button" id="czClr" ${cu.n ? "" : "disabled"}>Clear all</button></div>
+        <div class="ac"><button type="button" id="czSt" title="Replace the furniture with the starter office: 12 desks and a lounge">Use the starter office</button></div>
         ${sec("wall")}${sec("floor")}
         <div class="ac"><button type="button" id="czR">Reset</button><button type="button" id="czD">Done</button></div>`;
       prev();
@@ -723,6 +847,7 @@ let nq = null;
       $("czU").onclick = () => U.undo();
       $("czRd").onclick = () => U.redo();
       $("czClr").onclick = () => { if (confirm("Remove all furniture?")) U.clear(); };
+      $("czSt").onclick = () => { if (!U.cur().n || confirm("Replace the furniture with the starter office? Undo brings yours back.")) U.starter(); };
       for (const b of P.querySelectorAll("[data-p]")) b.onclick = () => { F.set(b.dataset.k, { ...F.get(b.dataset.k), p: b.dataset.p }); save(); draw(); };
       for (const i of P.querySelectorAll("[data-c]")) i.oninput = () => { F.set(i.dataset.k, { ...F.get(i.dataset.k), [i.dataset.c]: i.value }); save(); prev(); };
       $("czR").onclick = () => { F.load({}); save(); draw(); };

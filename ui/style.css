@@ -457,6 +457,7 @@ body.led #bLay, body.ed #bCz { background: color-mix(in oklch, var(--ac) 16%, tr
 .lo:hover { border-color: color-mix(in oklch, var(--ac) 70%, transparent); }
 .lo.on { border-color: var(--ac); background: color-mix(in oklch, var(--ac) 6%, transparent); }
 .lo.lk { cursor: default; border-style: dashed; }
+.lo.no { border-color: var(--bad); background: color-mix(in oklch, var(--bad) 10%, transparent); }
 .lo b { position: absolute; left: 8px; top: 8px; font: 600 11px/1 var(--s); padding: 5px 7px; border-radius: 6px; background: var(--f2); color: var(--t1); box-shadow: var(--hl); pointer-events: none; }
 .lo i { position: absolute; width: 12px; height: 12px; background: var(--ac); border: 2px solid var(--p); border-radius: 3px; }
 .lo i[data-h=nw] { left: -6px; top: -6px; cursor: nwse-resize; } .lo i[data-h=ne] { right: -6px; top: -6px; cursor: nesw-resize; }
@@ -1264,3 +1265,63 @@ input[type=checkbox]:focus { border-width: 1.5px; }
 .mstep { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 5px 7px; border-radius: 6px; background: var(--p); border: 1px solid var(--l); font: 11px/1.35 var(--m); }
 .mstep a { color: var(--t1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { #chat { inset: 0; width: auto; height: auto; border: 0; border-radius: 0; } }
+
+/* Setup progress */
+.spb { margin-top: 10px; font-size: 12px; }
+.spb-hd, .spb-ft { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.spb-hd b { color: var(--t1); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.spb-p { font: 600 12px var(--m); color: var(--t1); font-variant-numeric: tabular-nums; }
+.spb-tr { position: relative; height: 10px; margin: 6px 0; border-radius: 999px; background: var(--h); border: 1px solid var(--l); overflow: hidden; }
+.spb-f { position: absolute; inset: 0; transform-origin: left; transform: scaleX(0); background: var(--ac); border-radius: inherit; transition: transform .25s linear, background-color .4s; overflow: hidden; }
+/* Ripples move left, against the fill (Harrison et al., CHI 2010); they slow near the end via --rip. */
+.spb-f::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(115deg, transparent 0 10px, rgb(255 255 255 / .22) 10px 18px); background-size: 40px 100%; animation: spb-rip var(--rip, 1.2s) linear infinite; }
+@keyframes spb-rip { to { background-position: -40px 0; } }
+.spb-ft { color: var(--t2); font: 11px var(--m); min-height: 15px; }
+.spb-d { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spb-t { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.spb-m { display: flex; flex-wrap: wrap; gap: 4px 14px; list-style: none; padding: 0; margin: 8px 0 0; color: var(--t3); }
+.spb-m li::before { content: "○"; margin-right: 5px; }
+.spb-m li.on { color: var(--t1); }
+.spb-m li.on::before { content: "◉"; color: var(--ac); }
+.spb-m li.ok { color: var(--t2); }
+.spb-m li.ok::before { content: "✓"; color: var(--ok); }
+.spb-tip { margin-top: 8px; color: var(--t2); transition: opacity .3s; }
+.spb-tip.out { opacity: 0; }
+.spb.done .spb-f { background: var(--ok); }
+.spb.done .spb-f::after, .spb.fail .spb-f::after { animation: none; opacity: 0; }
+.spb.done .spb-l { color: var(--ok); }
+.spb.fail .spb-f { background: var(--bad); }
+.spb.fail .spb-d { white-space: normal; color: var(--bad); }
+@media (prefers-reduced-motion: reduce) { .spb-f { transition: none; } .spb-f::after { animation: none; } .spb-tip { transition: none; } }
+
+/* phone: nav becomes a drawer, the scene stacks instead of using absolute panels */
+.app > header .nvm { display: none; }
+@media (max-width: 860px) {
+  body { grid-template-columns: minmax(0, 1fr); }
+  .app > header .nvm { display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+  .nvm svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+  .nv, body.nvs .nv { position: fixed; z-index: 60; inset: 0 auto 0 0; width: 240px; max-width: 82vw; transform: translateX(-102%); transition: transform .18s ease-out; box-shadow: none; }
+  body.nvo .nv { transform: none; box-shadow: 0 0 0 100vmax rgb(0 0 0 / .45); }
+  body.nvs .nv a span, body.nvs .nv .bt, body.nvs .nv .cnt:not(.hot), body.nvs .nv .nvf .chip { display: revert; }
+  .nv .nvc { display: none; }
+  body.lay:not(.ed):not(.fed) #lay { display: flex; flex-direction: column; gap: 10px; overflow: auto; margin: 0; }
+  body.lay:not(.ed):not(.fed) .lp { position: static !important; inset: auto !important; width: auto !important; height: auto !important; flex: none; }
+  body.lay:not(.ed):not(.fed) .lp.stage { display: flex !important; order: -1; height: 78vw !important; min-height: 240px; max-height: 56vh !important; }
+  .app > header { align-items: center; }
+  .app > header .nvm { flex: none; align-self: center; height: 32px; width: 32px; }
+  body.lay:not(.ed):not(.fed) .lp:not(.stage) { max-height: 60vh !important; min-height: 120px; }
+}
+
+#cvb { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.stage > #cv { position: relative; z-index: 1; }
+
+.tiles.sl { -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px); mask-image: linear-gradient(90deg, transparent, #000 28px); }
+.tiles.sr { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 56px), transparent); }
+.tiles.sl.sr { -webkit-mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(90deg, transparent, #000 28px, #000 calc(100% - 56px), transparent); }
+.tnv { position: absolute; pointer-events: none; display: flex; justify-content: space-between; align-items: center; }
+.tnv[hidden] { display: none; }
+.tnv button { pointer-events: auto; height: 24px; padding: 0 9px; border-radius: 99px; font: 600 11px/1 var(--s); background: var(--p); border: 1px solid var(--l); color: var(--t1); box-shadow: 0 1px 4px rgb(0 0 0 / .3); }
+.tnv button:hover { border-color: var(--ac); }
+.tnv button[hidden] { display: none; }
+.tnv .tl { margin-left: 2px; }
+.tnv .tr { margin-left: auto; margin-right: 2px; }

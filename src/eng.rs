@@ -551,6 +551,56 @@ pub fn places(it: &[Value]) -> usize {
     n
 }
 
+/// The office a new install starts with: two rows of six desks, each with its chair
+/// behind it, beside the monitor, so the worker faces the room, servers on the right and a lounge at the
+/// bottom left. The bottom right stays free for workers who have no desk.
+pub fn starter_office() -> Value {
+    let mut it = Vec::new();
+    for dy in [5, 14] {
+        for dx in [3, 10, 17, 24, 31, 38] {
+            it.push(json!({"i": "desk", "x": dx, "y": dy}));
+            // Left of centre so the worker sits beside the monitor, not behind it.
+            it.push(json!({"i": "chair", "x": dx, "y": dy - 2}));
+        }
+    }
+    for (i, x, y) in [
+        ("rack", 45, 4), ("rack", 45, 8), ("plant", 48, 2), ("plant", 1, 2), ("lamp", 1, 12),
+        ("rug", 3, 20), ("table", 4, 21), ("sofa", 3, 24), ("lamp", 10, 24), ("coffee", 12, 20), ("cooler", 15, 20), ("shelf", 19, 24), ("plant", 1, 26), ("plant", 48, 19),
+    ] {
+        it.push(json!({"i": i, "x": x, "y": y}));
+    }
+    json!({"size": {"w": 50, "h": 28}, "items": it})
+}
+
+/// Gives a new office its starter furniture, once. An office that was ever saved, even
+/// emptied on purpose, is left alone, and so is one that was seeded before.
+pub fn seed_office(db: &crate::db::Db) {
+    if db.kg("office_seeded").as_bool() == Some(true) {
+        return;
+    }
+    let mut set = db.kg("set");
+    if !set.is_object() {
+        set = json!({});
+    }
+    if set["office"]["items"].is_null() {
+        let st = starter_office();
+        if !set["office"].is_object() {
+            set["office"] = json!({});
+        }
+        set["office"]["items"] = st["items"].clone();
+        // Grow a smaller saved room so every starter item is inside it.
+        for k in ["w", "h"] {
+            let have = set["office"]["size"][k].as_i64().unwrap_or(0);
+            let need = st["size"][k].as_i64().unwrap_or(0);
+            if have < need {
+                set["office"]["size"][k] = json!(need);
+            }
+        }
+        db.ks("set", &set);
+    }
+    db.ks("office_seeded", &json!(true));
+}
+
 pub fn desks(a: &Ax) -> usize {
     a.set()["office"]["items"].as_array().map(|it| places(it)).unwrap_or(0)
 }
@@ -725,6 +775,50 @@ mod t {
     fn places_pair_desks_with_chairs() {
         let it: Vec<serde_json::Value> = serde_json::from_str(r#"[{"i":"desk","x":6,"y":4},{"i":"chair","x":7,"y":6},{"i":"desk","x":16,"y":4},{"i":"chair","x":17,"y":1},{"i":"desk","x":30,"y":4},{"i":"chair","x":40,"y":6}]"#).unwrap();
         assert_eq!(super::places(&it), 2);
+    }
+
+    #[test]
+    fn the_starter_office_seats_twelve_and_fits_the_room() {
+        let o = super::starter_office();
+        let it = o["items"].as_array().unwrap();
+        assert_eq!(super::places(it), 12);
+        // Footprints and layers as in ui/o.js FC; the rug is the floor layer.
+        let fp = |i: &str| match i { "desk" => (4, 2, 1), "chair" | "rack" => (2, 2, 1), "sofa" => (5, 2, 1), "table" => (3, 2, 1), "shelf" => (4, 1, 1), "coffee" => (2, 1, 1), "rug" => (6, 4, 0), "plant" | "cooler" | "lamp" => (1, 1, 1), x => panic!("{x} is not allowed in an office") };
+        let (w, h) = (o["size"]["w"].as_i64().unwrap(), o["size"]["h"].as_i64().unwrap());
+        let r: Vec<(i64, i64, i64, i64, i64)> = it.iter().map(|u| { let (fw, fh, l) = fp(u["i"].as_str().unwrap()); (u["x"].as_i64().unwrap(), u["y"].as_i64().unwrap(), fw, fh, l) }).collect();
+        for (k, a) in r.iter().enumerate() {
+            assert!(a.0 >= 0 && a.1 >= 0 && a.0 + a.2 <= w && a.1 + a.3 <= h, "item {k} is outside the room: {:?}", it[k]);
+            for (j, b) in r.iter().enumerate().skip(k + 1) {
+                let hit = a.4 == b.4 && a.0 < b.0 + b.2 && b.0 < a.0 + a.2 && a.1 < b.1 + b.3 && b.1 < a.1 + a.3;
+                assert!(!hit, "{:?} overlaps {:?}", it[k], it[j]);
+            }
+        }
+    }
+
+    #[test]
+    fn a_new_office_is_seeded_once_and_a_saved_one_is_kept() {
+        let db = crate::db::Db::mem();
+        super::seed_office(&db);
+        assert_eq!(super::places(db.kg("set")["office"]["items"].as_array().unwrap()), 12);
+        // Emptied on purpose afterwards: never seeded again.
+        db.ks("set", &json!({"office": {"items": []}}));
+        super::seed_office(&db);
+        assert_eq!(db.kg("set")["office"]["items"], json!([]));
+        // An install that already had its own office keeps it.
+        let db = crate::db::Db::mem();
+        db.ks("set", &json!({"office": {"items": [{"i": "sofa", "x": 5, "y": 5}]}, "orch": true}));
+        super::seed_office(&db);
+        assert_eq!(db.kg("set")["office"]["items"].as_array().unwrap().len(), 1);
+        // A smaller saved room grows to fit the starter furniture.
+        let db = crate::db::Db::mem();
+        db.ks("set", &json!({"office": {"size": {"w": 30, "h": 40}}}));
+        super::seed_office(&db);
+        assert_eq!(db.kg("set")["office"]["size"], json!({"w": 50, "h": 40}));
+        let db = crate::db::Db::mem();
+        db.ks("set", &json!({"office": {"items": [{"i": "sofa", "x": 5, "y": 5}]}, "orch": true}));
+        super::seed_office(&db);
+        assert_eq!(db.kg("set")["office"]["items"].as_array().unwrap().len(), 1);
+        assert_eq!(db.kg("set")["orch"], true);
     }
 
     use super::*;

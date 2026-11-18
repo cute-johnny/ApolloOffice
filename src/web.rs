@@ -181,14 +181,82 @@ async fn checks(a: &Ax) -> Value {
         "git": {"ok": g.c == 0, "m": if g.c == 0 { g.o.trim().to_string() } else { "Install git: https://git-scm.com".into() }},
         "gh": {"ok": h.c == 0, "m": if h.c == 0 { format!("logged in as {}", h.o.trim()) } else { "Install the GitHub CLI and run: gh auth login".into() }},
         "claude": {"ok": c.c == 0, "m": if c.c == 0 { c.o.trim().to_string() } else { "Install Claude Code and log in: https://claude.com/claude-code".into() }},
-        "docker": {"ok": d.c == 0, "m": if d.c == 0 { format!("Docker {}", d.o.trim()) } else { "Docker is not running (optional, recommended)".into() }},
+        "docker": docker_diag(d.c, &d.o, &d.e, std::env::consts::OS),
         "bash": {"ok": b.c == 0, "m": if b.c == 0 { "bash ok".to_string() } else { "bash not found (on Windows it comes with Git for Windows)".to_string() }},
     })
 }
 
+/// Says why Docker cannot be used here and the one step that fixes it on this OS.
+/// `state`: ok, missing (no CLI), denied (daemon up, no permission), stopped (daemon not reachable),
+/// slow (`docker info` did not answer in time, e.g. Docker Desktop still starting).
+/// The fix comes as data so the page needs no parsing: `cmd` (a command to copy), `url` (a page to open),
+/// `after` (what to do once it is done) and `warn` (a risk to know about). Empty strings when not used.
+/// `start` is true when ApolloOffice can start Docker itself (Docker Desktop on macOS and Windows).
+fn docker_diag(c: i32, o: &str, e: &str, os: &str) -> Value {
+    let r = |state: &str, m: &str, cmd: &str, url: &str, after: &str, warn: &str, start: bool| {
+        json!({"ok": state == "ok", "state": state, "m": m, "cmd": cmd, "url": url, "after": after, "warn": warn, "start": start})
+    };
+    if c == 0 {
+        return r("ok", &format!("Docker {}", o.trim()), "", "", "", "", false);
+    }
+    let desk = matches!(os, "macos" | "windows");
+    // `run` gives -1 both when the CLI could not be spawned and when it timed out; only the first means "not installed".
+    if c == -1 && e.starts_with("timeout after") {
+        let m = "Docker is not answering. It may still be starting.";
+        return match os {
+            "linux" => r("slow", m, "sudo systemctl restart docker", "", "", "", false),
+            "macos" => r("slow", m, "open -a Docker", "", "", "", true),
+            _ => r("slow", m, "", "", "Wait a minute, or restart Docker Desktop.", "", desk),
+        };
+    }
+    if c == -1 {
+        let url = if os == "linux" { "https://docs.docker.com/engine/install/" } else { "https://www.docker.com/products/docker-desktop/" };
+        return r("missing", "Docker is not installed (optional, recommended).", "", url, "", "", false);
+    }
+    if e.to_lowercase().contains("permission denied") {
+        return r(
+            "denied",
+            "Docker is running, but your user may not use it.",
+            "sudo usermod -aG docker $USER",
+            "",
+            "Then log out and back in, restart ApolloOffice and click Auto-Setup again.",
+            "Members of the docker group can get root access on this computer. If that matters here, use rootless Docker instead.",
+            false,
+        );
+    }
+    match os {
+        "linux" => r("stopped", "Docker is installed but not running.", "sudo systemctl enable --now docker", "", "", "", false),
+        "macos" => r("stopped", "Docker Desktop is not running.", "open -a Docker", "", "", "", true),
+        "windows" => r("stopped", "Docker Desktop is not running.", "", "", "Start Docker Desktop from the Start menu.", "", true),
+        _ => r("stopped", "Docker is not running.", "", "", "Start the Docker daemon.", "", false),
+    }
+}
+
+/// Only the Docker check, for the setup page to poll while the user fixes Docker.
+async fn docker_check() -> Value {
+    let d = crate::sh::run(&crate::sh::tool("docker"), &["info".into(), "--format".into(), "{{.ServerVersion}}".into()], crate::sh::Rq { t: 15, ..Default::default() }).await;
+    docker_diag(d.c, &d.o, &d.e, std::env::consts::OS)
+}
+
+/// Starts Docker Desktop on macOS or Windows. It takes a while to come up, so the page polls `/api/check`.
+async fn docker_start() -> Response<Body> {
+    use crate::sh::{run, Rq};
+    let (p, x): (&str, Vec<String>) = match std::env::consts::OS {
+        "macos" => ("open", vec!["-a".into(), "Docker".into()]),
+        "windows" => ("cmd", vec!["/C".into(), "start".into(), "".into(), r"C:\Program Files\Docker\Docker\Docker Desktop.exe".into()]),
+        _ => return js(json!({"ok": false, "m": "Start Docker yourself with the command shown, then click Check again."})),
+    };
+    let r = run(p, &x, Rq { t: 30, ..Default::default() }).await;
+    if r.c == 0 {
+        js(json!({"ok": true, "m": "Starting Docker Desktop…"}))
+    } else {
+        js(json!({"ok": false, "m": format!("Could not start Docker Desktop: {}", r.e.trim())}))
+    }
+}
+
 fn cfg(a: &Ax) -> Value {
     let rs: Vec<Value> = a.db.all("select * from rp order by full", pa![]).into_iter().map(|mut r| { let f = r["full"].as_str().unwrap_or("").to_string(); r["st"] = rst(a, &f); r }).collect();
-    json!({"xc": crate::xs::XC.iter().map(|x| json!({"t": x.0, "n": x.1, "p": x.2})).collect::<Vec<_>>(), "repos": rs, "hosts": a.db.all("select * from hs order by id='local' desc, id", pa![]), "set": a.set(), "data": a.dd.display().to_string(), "auto": crate::sys::autostart_on(&a.dd), "prov": crate::prov::status(a), "google": crate::goog::linked(a)["email"], "upd": a.db.kg("upd"), "asset": crate::upd::named(crate::app::V), "api": {"on": a.db.kg("api")["h"].is_string(), "t0": a.db.kg("api")["t0"], "last": a.db.kg("api")["last"], "port": a.port}, "hook": {"on": a.db.kg("hook")["h"].is_string(), "t0": a.db.kg("hook")["t0"]}})
+    json!({"xc": crate::xs::XC.iter().map(|x| json!({"t": x.0, "n": x.1, "p": x.2})).collect::<Vec<_>>(), "repos": rs, "hosts": a.db.all("select * from hs order by id='local' desc, id", pa![]), "set": a.set(), "data": a.dd.display().to_string(), "auto": crate::sys::autostart_on(&a.dd), "prov": crate::prov::status(a), "google": crate::goog::linked(a)["email"], "upd": a.db.kg("upd"), "asset": crate::upd::named(crate::app::V), "api": {"on": a.db.kg("api")["h"].is_string(), "t0": a.db.kg("api")["t0"], "last": a.db.kg("api")["last"], "port": a.port}, "hook": {"on": a.db.kg("hook")["h"].is_string(), "t0": a.db.kg("hook")["t0"]}, "starter": crate::eng::starter_office()})
 }
 
 fn rst(a: &Ax, r: &str) -> Value {
@@ -807,7 +875,7 @@ fn setup_steps(ck: &Value) -> Vec<Value> {
         json!({"k": "bash", "ok": ok("bash"), "m": ck["bash"]["m"], "action": if ok("bash") { "Ready" } else { "Install Git for Windows (provides Git Bash)" }}),
         json!({"k": "gh", "ok": ok("gh"), "m": ck["gh"]["m"], "action": if ok("gh") { "Ready" } else { "Run in terminal: gh auth login" }}),
         json!({"k": "claude", "ok": ok("claude"), "m": ck["claude"]["m"], "action": if ok("claude") { "Ready" } else { "Install Claude Code and run: claude (to sign in)" }}),
-        json!({"k": "docker", "ok": ok("docker"), "m": ck["docker"]["m"], "action": if ok("docker") { "Ready (sandboxed builds)" } else { "Start Docker Desktop (recommended) or confirm direct local builds" }}),
+        json!({"k": "docker", "ok": ok("docker"), "m": ck["docker"]["m"], "action": if ok("docker") { "Ready (sandboxed builds)".to_string() } else { { let d = &ck["docker"]; let f = [&d["cmd"], &d["url"], &d["after"]].iter().filter_map(|x| x.as_str()).find(|x| !x.is_empty()).unwrap_or(""); format!("{f} Or build directly on this computer.").trim_start().to_string() } }}),
     ]
 }
 
@@ -820,7 +888,7 @@ async fn auto_setup(a: &Ax, b: &Value) -> Response<Body> {
         return js(json!({
             "ok": false,
             "needs_docker_or_raw": true,
-            "m": "Docker Desktop is not running. Start Docker Desktop (recommended) and click Auto-Setup again, or confirm running directly on this computer.",
+            "m": ck["docker"]["m"].clone(),
             "checks": ck,
             "steps": steps,
             "cfg": cfg(a),
@@ -1042,6 +1110,7 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
         ("GET", "/api/state") => js(state(a)),
         ("GET", "/api/cfg") => js(cfg(a)),
         ("GET", "/api/check") => js(checks(a).await),
+        ("GET", "/api/check/docker") => js(docker_check().await),
         ("GET", "/api/report") => match repdetail(a,qv("id").parse().unwrap_or(0)) {
             Some(value)=>js(value),None=>er(StatusCode::NOT_FOUND,"no report with this id"),
         },
@@ -1083,6 +1152,8 @@ async fn api(a: &Ax, m: &Method, p: &str, q: &str, b: Value) -> Response<Body> {
             }
         }
         ("POST", "/api/setup/auto") => auto_setup(a, &b).await,
+        ("POST", "/api/setup/docker") => docker_start().await,
+        ("GET", "/api/setup/progress") => js(crate::prog::get("local")),
         ("POST", "/api/project") => match project_act(a, &b) {
             Ok(v) => js(v),
             Err((c, m)) => er(c, &m),
@@ -1771,5 +1842,26 @@ mod t {
             assert_eq!(api(&a, &Method::POST, p, "", json!({})).await.status(), StatusCode::CONFLICT);
         }
         assert_eq!(state(&a)["orch"], false);
+    }
+
+    #[test]
+    fn docker_check_names_the_cause_and_the_fix() {
+        let d = super::docker_diag(0, "29.1.0\n", "", "linux");
+        assert_eq!((d["ok"].as_bool(), d["state"].as_str(), d["m"].as_str()), (Some(true), Some("ok"), Some("Docker 29.1.0")));
+        let d = super::docker_diag(1, "", "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock", "linux");
+        assert_eq!((d["state"].as_str(), d["cmd"].as_str()), (Some("denied"), Some("sudo usermod -aG docker $USER")));
+        assert!(d["warn"].as_str().unwrap().contains("root"));
+        let d = super::docker_diag(-1, "", "docker: No such file or directory (os error 2)", "linux");
+        assert_eq!((d["state"].as_str(), d["cmd"].as_str()), (Some("missing"), Some("")));
+        assert!(d["url"].as_str().unwrap().contains("docs.docker.com/engine"));
+        // A timeout is not "not installed".
+        let d = super::docker_diag(-1, "", "timeout after 30 s", "linux");
+        assert_eq!((d["ok"].as_bool(), d["state"].as_str()), (Some(false), Some("slow")));
+        let d = super::docker_diag(1, "", "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?", "linux");
+        assert_eq!((d["state"].as_str(), d["start"].as_bool(), d["cmd"].as_str()), (Some("stopped"), Some(false), Some("sudo systemctl enable --now docker")));
+        let d = super::docker_diag(1, "", "Cannot connect to the Docker daemon at unix:///Users/x/.docker/run/docker.sock.", "macos");
+        assert_eq!((d["state"].as_str(), d["start"].as_bool()), (Some("stopped"), Some(true)));
+        let d = super::docker_diag(1, "", "error during connect: open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified.", "windows");
+        assert_eq!((d["state"].as_str(), d["start"].as_bool(), d["cmd"].as_str()), (Some("stopped"), Some(true), Some("")));
     }
 }

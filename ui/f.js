@@ -222,7 +222,7 @@
     if (ty === "area") return `<label>${l}</label><textarea data-k="${k}" placeholder="${esc(ph)}" rows="4">${esc(v)}</textarea>`;
     return `<label>${l}</label><input type="text" data-k="${k}" value="${esc(v)}" placeholder="${esc(ph || "")}">`;
   };
-  const GN = [["team", "Bug-fix team"], ["check", "Checks"], ["code", "Code"], ["text", "Writing"], ["data", "Data and research"], ["ops", "Operations"], ["lead", "Planning"]];
+  const GN = [["team", "Copies of the built-in team"], ["check", "Checks"], ["code", "Code"], ["text", "Writing"], ["data", "Data and research"], ["ops", "Operations"], ["lead", "Planning"]];
   let custom = false, q = "";
   const hireForm = () => {
     const rs = (D.roles || []).filter((r) => !q || (r.n + " " + r.d).toLowerCase().includes(q.toLowerCase()));

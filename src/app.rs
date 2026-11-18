@@ -171,6 +171,7 @@ pub fn dset() -> Value {
 
 impl App {
     pub fn new(db: Db, dd: PathBuf, port: u16, me: PathBuf) -> App {
+        crate::eng::seed_office(&db);
         let mut lv = Lv::default();
         let ho = db.kg("hold");
         for w in WS {

@@ -11,8 +11,8 @@
   let raf = 0, drag = null, over = null;
   const SC = /(auto|scroll|overlay)/;
   const root = () => document.scrollingElement || document.documentElement;
-  const canY = (e) => e.scrollHeight > e.clientHeight + 1 && (e === root() ? getComputedStyle(document.body).overflowY !== "hidden" : SC.test(getComputedStyle(e).overflowY));
-  const canX = (e) => e.scrollWidth > e.clientWidth + 1 && (e === root() ? getComputedStyle(document.body).overflowX !== "hidden" : SC.test(getComputedStyle(e).overflowX));
+  const canY = (e) => !e.dataset.nosb && e.scrollHeight > e.clientHeight + 1 && (e === root() ? getComputedStyle(document.body).overflowY !== "hidden" : SC.test(getComputedStyle(e).overflowY));
+  const canX = (e) => !e.dataset.nosb && e.scrollWidth > e.clientWidth + 1 && (e === root() ? getComputedStyle(document.body).overflowX !== "hidden" : SC.test(getComputedStyle(e).overflowX));
   const box = (e) => {
     if (e === root()) return { l: 0, t: 0, r: innerWidth, b: innerHeight };
     const r = e.getBoundingClientRect(), s = getComputedStyle(e);

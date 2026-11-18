@@ -341,7 +341,9 @@ pub fn hbid(a: &App, h: &str) -> String {
     ho(a, h).map(|x| hb(a, &x)).unwrap_or_else(|| "/work".into())
 }
 
-pub const PRE: &str = "ulimit -n 10240 2>/dev/null; export PATH=\"$HOME/.cargo/bin:$HOME/.local/bin:$HOME/go/bin:/usr/local/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\" CARGO_TERM_COLOR=never NO_COLOR=1 CI=1 GIT_TERMINAL_PROMPT=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_TEST_DEBUG=line-tables-only CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 CARGO_PROFILE_BENCH_LTO=off; to() { s=$1; shift; if command -v timeout >/dev/null 2>&1 && timeout --version 2>/dev/null | head -n 1 | grep -q 'coreutils'; then timeout -k 10 \"$s\" \"$@\"; else \"$@\"; fi; }\nif [ \"${APOLLO_OFFICE_FNM:-}\" = 1 ] && command -v fnm >/dev/null 2>&1; then _ao_fnm_env=$(fnm env --shell bash --resolve-engines --version-file-strategy recursive) && { eval \"$_ao_fnm_env\"; _ao_fnm_link=${FNM_MULTISHELL_PATH:-}; trap 'if [ -L \"$_ao_fnm_link\" ]; then rm -f -- \"$_ao_fnm_link\"; fi' EXIT; _ao_node() { local d=$PWD; while :; do if [ -f \"$d/.nvmrc\" ] || [ -f \"$d/.node-version\" ]; then fnm use --silent-if-unchanged >/dev/null 2>&1; break; fi; if [ \"$d\" = / ]; then fnm use --silent-if-unchanged system >/dev/null 2>&1; break; fi; d=${d%/*}; d=${d:-/}; done; hash -r; }; cd() { builtin cd \"$@\" || return $?; _ao_node || true; }; _ao_node || true; }; fi\n";
+const WD: &str = include_str!("wd.sh");
+
+pub const PRE: &str = "ulimit -n 10240 2>/dev/null; export PATH=\"$HOME/.cargo/bin:$HOME/.local/bin:$HOME/go/bin:/usr/local/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\" CARGO_TERM_COLOR=never CARGO_HTTP_TIMEOUT=30 CARGO_NET_RETRY=3 CARGO_HTTP_MULTIPLEXING=false npm_config_fetch_retries=3 npm_config_fetch_timeout=60000 PIP_DEFAULT_TIMEOUT=30 PIP_RETRIES=3 NO_COLOR=1 CI=1 GIT_TERMINAL_PROMPT=0 CARGO_PROFILE_DEV_DEBUG=line-tables-only CARGO_PROFILE_TEST_DEBUG=line-tables-only CARGO_PROFILE_RELEASE_LTO=off CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 CARGO_PROFILE_BENCH_LTO=off; to() { s=$1; shift; if command -v timeout >/dev/null 2>&1 && timeout --version 2>/dev/null | head -n 1 | grep -q 'coreutils'; then timeout -k 10 \"$s\" \"$@\"; else \"$@\"; fi; }\nif [ \"${APOLLO_OFFICE_FNM:-}\" = 1 ] && command -v fnm >/dev/null 2>&1; then _ao_fnm_env=$(fnm env --shell bash --resolve-engines --version-file-strategy recursive) && { eval \"$_ao_fnm_env\"; _ao_fnm_link=${FNM_MULTISHELL_PATH:-}; trap 'if [ -L \"$_ao_fnm_link\" ]; then rm -f -- \"$_ao_fnm_link\"; fi' EXIT; _ao_node() { local d=$PWD; while :; do if [ -f \"$d/.nvmrc\" ] || [ -f \"$d/.node-version\" ]; then fnm use --silent-if-unchanged >/dev/null 2>&1; break; fi; if [ \"$d\" = / ]; then fnm use --silent-if-unchanged system >/dev/null 2>&1; break; fi; d=${d%/*}; d=${d:-/}; done; hash -r; }; cd() { builtin cd \"$@\" || return $?; _ao_node || true; }; _ao_node || true; }; fi\n";
 
 fn sshv(h: &Ho) -> Vec<String> {
     let mut v: Vec<String> = vec!["-o".into(), "ConnectTimeout=15".into(), "-o".into(), "ServerAliveInterval=15".into(), "-o".into(), "ServerAliveCountMax=4".into(), "-o".into(), "BatchMode=yes".into()];
@@ -364,13 +366,17 @@ fn jobs(a: &App, h: &Ho) -> String {
 }
 
 pub async fn hraw(h: &Ho, s: &str, t: u64) -> Out {
+    hraw_ln(h, s, t, None).await
+}
+
+pub async fn hraw_ln(h: &Ho, s: &str, t: u64, ln: Option<&(dyn Fn(&str) + Send + Sync)>) -> Out {
     let i = format!("{PRE}{s}");
     if h.ssh.is_empty() {
-        run(&bash(), &["-s".into()], Rq { i: Some(i), t, strip_provider_secrets: true, ..Default::default() }).await
+        run(&bash(), &["-s".into()], Rq { i: Some(i), t, ln, strip_provider_secrets: true, ..Default::default() }).await
     } else {
         let mut v = sshv(h);
         v.extend(["bash".into(), "-s".into()]);
-        run(&tool("ssh"), &v, Rq { i: Some(i), t, strip_provider_secrets: true, ..Default::default() }).await
+        run(&tool("ssh"), &v, Rq { i: Some(i), t, ln, strip_provider_secrets: true, ..Default::default() }).await
     }
 }
 
@@ -388,7 +394,7 @@ async fn hxo(a: &App, id: &str, s: &str, t: u64, ln: Option<&(dyn Fn(&str) + Sen
     // GNU timeout runs on compatible workers; the outer process watchdog remains
     // active everywhere, including Windows/macOS without GNU coreutils timeout.
     let boundary=format!("APOLLO_JOB_{}",hex::encode(rand::random::<[u8;16]>()));
-    let body=format!("if command -v timeout >/dev/null 2>&1 && timeout --version 2>/dev/null | head -n 1 | grep -q 'coreutils'; then exec timeout -k 5 {t}s bash -s; else exec bash -s; fi <<'{boundary}'\n{PRE}{s}\n{boundary}\n");
+    let body=format!("if command -v timeout >/dev/null 2>&1 && timeout --version 2>/dev/null | head -n 1 | grep -q 'coreutils'; then exec timeout -k 5 {t}s bash -s; else exec bash -s; fi <<'{boundary}'\n{PRE}{WD}{s}\n{boundary}\n");
     // Only the inner Bash session initializes fnm; its exit trap removes
     // its own multishell symlink after the command has completed.
     let i = format!("{}{body}", jobs(a, &h));
@@ -464,7 +470,7 @@ pub fn cap_docker_cpu(host_cpus: i64, docker_ncpu: Option<i64>, configured: i64)
 
 pub fn dkup(h: &Ho, cpu: i64) -> String {
     format!(
-        "command -v docker >/dev/null || {{ echo 'docker is not installed'; exit 2; }}\ndocker info >/dev/null 2>&1 || {{ echo 'docker is not running'; exit 2; }}\nif ! docker image inspect {im} >/dev/null 2>&1; then docker build -q -t {im} - <<'DOCKERFILE'\n{DF}DOCKERFILE\nfi\nold=$(docker inspect -f '{{{{.Config.Image}}}}' {CT} 2>/dev/null)\nini=$(docker inspect -f '{{{{.HostConfig.Init}}}} {{{{.State.Paused}}}}' {CT} 2>/dev/null)\nif [ -n \"$old\" ] && {{ [ \"$old\" != {im} ] || [ \"$ini\" = 'false false' ] || [ \"$ini\" = '<nil> false' ]; }}; then docker rm -f {CT} >/dev/null 2>&1; fi\nst=''\n{{ [ \"$ini\" = 'false true' ] || [ \"$ini\" = '<nil> true' ]; }} && st=' stale'\nr=$(docker inspect -f '{{{{.State.Running}}}}' {CT} 2>/dev/null)\nm=$(( $(docker info --format '{{{{.MemTotal}}}}' 2>/dev/null || echo 0) / 1048576 - 3072 ))\n[ \"$m\" -lt 2048 ] && m=2048\nif [ -z \"$r\" ]; then out=$(docker run -d --init --name {CT} --restart unless-stopped --cpus {cpu} --cpu-shares 128 --memory \"$m\"m --memory-swap \"$m\"m -v apollo-office-work:/work -v apollo-office-cargo:/usr/local/cargo/registry {im} sleep infinity 2>&1) || [ \"$(docker inspect -f '{{{{.State.Running}}}}' {CT} 2>/dev/null)\" = true ] || docker start {CT} >/dev/null 2>&1 || {{ printf '%s\\n' \"$out\" >&2; exit 3; }}; elif [ \"$r\" != true ]; then docker start {CT} >/dev/null || exit 3; fi\ndocker update --cpus {cpu} --cpu-shares 128 --memory \"$m\"m --memory-swap \"$m\"m {CT} >/dev/null 2>&1\ndocker images apollo-office-build --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep -vx {im} | xargs -r docker rmi >/dev/null 2>&1\necho \"ok {}$st\"\n",
+        "command -v docker >/dev/null || {{ echo 'docker is not installed'; exit 2; }}\ndocker info >/dev/null 2>&1 || {{ echo 'docker is not running'; exit 2; }}\nif ! docker image inspect {im} >/dev/null 2>&1; then echo '@@build'; docker build -t {im} - 2>&1 <<'DOCKERFILE' || exit 4\n{DF}DOCKERFILE\nfi\necho '@@start'\nold=$(docker inspect -f '{{{{.Config.Image}}}}' {CT} 2>/dev/null)\nini=$(docker inspect -f '{{{{.HostConfig.Init}}}} {{{{.State.Paused}}}}' {CT} 2>/dev/null)\nif [ -n \"$old\" ] && {{ [ \"$old\" != {im} ] || [ \"$ini\" = 'false false' ] || [ \"$ini\" = '<nil> false' ]; }}; then docker rm -f {CT} >/dev/null 2>&1; fi\nst=''\n{{ [ \"$ini\" = 'false true' ] || [ \"$ini\" = '<nil> true' ]; }} && st=' stale'\nr=$(docker inspect -f '{{{{.State.Running}}}}' {CT} 2>/dev/null)\nm=$(( $(docker info --format '{{{{.MemTotal}}}}' 2>/dev/null || echo 0) / 1048576 - 3072 ))\n[ \"$m\" -lt 2048 ] && m=2048\nif [ -z \"$r\" ]; then out=$(docker run -d --init --name {CT} --restart unless-stopped --cpus {cpu} --cpu-shares 128 --memory \"$m\"m --memory-swap \"$m\"m -v apollo-office-work:/work -v apollo-office-cargo:/usr/local/cargo/registry {im} sleep infinity 2>&1) || [ \"$(docker inspect -f '{{{{.State.Running}}}}' {CT} 2>/dev/null)\" = true ] || docker start {CT} >/dev/null 2>&1 || {{ printf '%s\\n' \"$out\" >&2; exit 3; }}; elif [ \"$r\" != true ]; then docker start {CT} >/dev/null || exit 3; fi\ndocker update --cpus {cpu} --cpu-shares 128 --memory \"$m\"m --memory-swap \"$m\"m {CT} >/dev/null 2>&1\ndocker images apollo-office-build --format '{{{{.Repository}}}}:{{{{.Tag}}}}' | grep -vx {im} | xargs -r docker rmi >/dev/null 2>&1\necho \"ok {}$st\"\n",
         h.id,
         im = im()
     )
@@ -501,6 +507,14 @@ pub async fn ensure(a: &Ax, id: &str) -> Result<bool, String> {
     let Some(h) = ho(a, id) else { return Err("unknown machine".into()) };
     let lk = ensure_lock(id);
     let _g = lk.lock().await;
+    let pr = std::sync::Mutex::new(crate::prog::Run::new(id, DF));
+    let res = ensure_with(a, id, &h, &pr).await;
+    pr.into_inner().unwrap().finish(res.as_ref().map(|_| ()).map_err(|e| e.clone()));
+    res
+}
+
+async fn ensure_with(a: &Ax, id: &str, h: &Ho, pr: &std::sync::Mutex<crate::prog::Run>) -> Result<bool, String> {
+    let h = h.clone();
     if !h.dk {
         let r = hraw(&h, &format!("mkdir -p \"{}\" && git --version >/dev/null && echo ok", hb(a, &h)), 60).await;
         return if r.c == 0 { Ok(true) } else { Err(format!("{}{}", r.o, r.e).trim().chars().take(300).collect()) };
@@ -511,7 +525,8 @@ pub async fn ensure(a: &Ax, id: &str) -> Result<bool, String> {
     let dcpu = ls.next().and_then(|s| s.trim().parse::<i64>().ok()).filter(|&v| v > 0);
     let cpu = cap_docker_cpu(n, dcpu, h.cpu);
     a.db.ks(&format!("cpu:{id}"), &serde_json::json!(cpu));
-    let r = hraw(&h, &dkup(&h, cpu), 3600).await;
+    let ln = |l: &str| pr.lock().unwrap().line(l);
+    let r = hraw_ln(&h, &dkup(&h, cpu), 3600, Some(&ln)).await;
     if r.c == 0 {
         Ok(!r.o.contains(" stale"))
     } else {

@@ -85,7 +85,7 @@ pub const ROLES: &[R] = &[
     R { t: "submit", n: "Submit", g: "team", d: "Opens the pull request under your account.", p: "", tl: &["github"] },
     R { t: "planner", n: "Planner", g: "lead", d: "Breaks big goals into steps over days.", p: "", tl: &["files"] },
     R { t: "triage", n: "Triage", g: "lead", d: "Checks what comes in and sends it to the right place and worker.", p: "", tl: &["files", "web"] },
-    R { t: "tester", n: "Tester", g: "code", d: "Runs tests and checks.", p: "", tl: &["shell", "files"] },
+    R { t: "tester", n: "Test Runner", g: "code", d: "Runs tests and checks.", p: "", tl: &["shell", "files"] },
     R { t: "auditor", n: "Auditor", g: "code", d: "Looks for security holes, changes nothing.", p: "", tl: &["shell", "files"] },
     R { t: "gardener", n: "Gardener", g: "code", d: "Keeps dependencies up to date.", p: "", tl: &["shell", "files"] },
     R { t: "release", n: "Release", g: "code", d: "Writes the changelog, bumps the version and tags.", p: "", tl: &["shell", "files"] },
